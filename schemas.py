@@ -62,8 +62,11 @@ class ProfilePreviewRequest(BaseModel):
 
 
 class ProfilePreviewResponse(BaseModel):
-    from_cache: bool
+    ok: bool = True
+    source: Literal["fresh", "cache"] = "fresh"
+    error: dict[str, Any] | None = None
     cached_until: datetime | None = None
+    from_cache: bool = False
     profile: dict[str, Any]
 
 
@@ -75,19 +78,47 @@ class JobCreateRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class JobItemResponse(BaseModel):
+    id: int
+    shortcode: str
+    target: str | None = None
+    media_type: str | None = None
+    status: str
+    error_code: str | None = None
+    error_message: str | None = None
+    result_path: str | None = None
+    metadata_path: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class JobStatusResponse(BaseModel):
+    ok: bool = True
     id: str
+    job_id: str
+    target: str
     username: str
+    mode: str
     status: str
     items_done: int
     items_total: int
+    completed_items: int
+    failed_items: int
     retry_after_at: datetime | None = None
     failure_reason: str | None = None
+    error_code: str | None = None
     error_message: str | None = None
     archive_ready: bool = False
     can_resume: bool = False
     download_url: str | None = None
+    manifest_url: str | None = None
+    result_dir: str | None = None
     archive_filename: str | None = None
     archive_size_bytes: int | None = None
+    items: list[JobItemResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None

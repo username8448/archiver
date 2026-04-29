@@ -29,6 +29,8 @@ DEFAULT_SETTINGS = {
     "default_preview_posts": 24,
     "archive_dir": str(DEFAULT_ARCHIVE_DIR),
     "max_active_jobs": 1,
+    "max_concurrent_downloads": 2,
+    "download_timeout_sec": 300,
     "comments_limit": 500,
 }
 
@@ -36,7 +38,11 @@ RESUMABLE_FAILURES = {
     "RATE_LIMIT",
     "NETWORK_ERROR",
     "DOWNLOAD_ERROR",
+    "DOWNLOAD_FAILED",
+    "MEDIA_NOT_AVAILABLE",
+    "TIMEOUT",
     "ARCHIVE_ERROR",
+    "STORAGE_ERROR",
 }
 
 CRITICAL_FAILURES = {

@@ -1,18 +1,19 @@
 /**
- * Instagram Archiver — Макет приложения
- * Все взаимодействия реализованы на чистом JS без бэкенда
- * Комментарии на русском языке
+ * Instagram Archiver — Runtime UI
+ * Рабочий режим подключён к FastAPI backend.
  */
 
 'use strict';
 
+const DEMO_MODE = false;
+
 /* =======================================================
-   МОКОВЫЕ ДАННЫЕ
-   Имитируют ответы будущего API
+   DEMO DATA
+   Оставлено только для явного demo-режима. DEMO_MODE=false в runtime.
    ======================================================= */
 
 /** Набор тестовых профилей для демонстрации */
-const MOCK_PROFILES = {
+const DEMO_PROFILES = {
   natgeo: {
     username: 'natgeo',
     fullname: 'National Geographic',
@@ -58,7 +59,7 @@ const MOCK_PROFILES = {
 };
 
 /** Данные stories */
-const MOCK_STORIES = [
+const DEMO_STORIES = [
   { label: 'Wildlife', short: 'WL' },
   { label: 'Explorers', short: 'EX' },
   { label: 'Ocean', short: 'OC' },
@@ -99,9 +100,17 @@ const POST_TYPES = {
               <path d="M8 21h8M12 17v4"/>
            </svg>`,
   },
+  unknown: {
+    label: 'Тип недоступен',
+    icon: `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4"/>
+              <path d="M12 17h.01"/>
+           </svg>`,
+  },
 };
 
-/** Генерация описаний постов (моковые данные) */
+/** Генерация описаний постов (demo data) */
 const CAPTIONS = [
   'A lone wolf traverses the snow-covered tundra of Yellowstone. These apex predators play a crucial role in maintaining the balance of ecosystems. 🐺❄️ #NatGeo #wildlife #wolves #Yellowstone',
   'The bioluminescent waters of Vaadhoo Island, Maldives glow in the dark — a result of millions of tiny phytoplankton emitting blue light when disturbed. 🌊✨ #ocean #bioluminescence #Maldives',
@@ -110,7 +119,7 @@ const CAPTIONS = [
   'Storm clouds gather over the Namibian desert as the sun sets. The contrast between the arid landscape and the approaching rain creates a dramatic scene that photographers travel thousands of miles to capture. 📷 #Namibia #Africa',
 ];
 
-/** Геолокации (моковые данные) */
+/** Геолокации (demo data) */
 const LOCATIONS = [
   'Yellowstone National Park, USA',
   'Vaadhoo Island, Maldives',
@@ -130,7 +139,7 @@ const RESOLUTIONS = ['1080×1080', '1080×1350', '1080×566', '1920×1080', '108
 const FILE_SIZES = ['3.2 MB', '4.7 MB', '2.1 MB', '18.4 MB', '5.3 MB', '3.8 MB', '6.1 MB', '24.2 MB'];
 
 /** Фоновые цвета-заглушки постов (имитируют разные фото) */
-const POST_COLORS = [
+const DEMO_POST_COLORS = [
   '#0D1B2A', '#1A0A1E', '#0A1628', '#1E0A0A', '#0A1E0A',
   '#1A1400', '#0A1A1A', '#160A28', '#1E0A14', '#0A1A0A',
   '#14100A', '#0A0A1E', '#1A0A0A', '#0A1410', '#140A1A',
@@ -195,7 +204,7 @@ function pick(arr) {
  * Генерирует случайный shortcode, имитирующий Instagram
  * @returns {string}
  */
-function randomShortcode() {
+function randomDemoShortcode() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
   return Array.from({ length: 11 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
@@ -204,7 +213,7 @@ function randomShortcode() {
  * Возвращает случайную дату в диапазоне последних 3 лет
  * @returns {string}
  */
-function randomDate() {
+function randomDemoDate() {
   const now = Date.now();
   const threeYearsAgo = now - 3 * 365 * 24 * 60 * 60 * 1000;
   const ts = threeYearsAgo + Math.random() * (now - threeYearsAgo);
@@ -231,26 +240,30 @@ function parseInput(input) {
    ======================================================= */
 
 /**
- * Генерирует массив моковых постов
+ * Генерирует массив demo-постов
  * @param {number} count - количество постов
  * @returns {Array}
  */
-function generatePosts(count) {
+function generateDemoPosts(count) {
+  if (!DEMO_MODE) {
+    console.warn('[Archiver] generateDemoPosts() отключён в Real API mode.');
+    return [];
+  }
   const types = ['photo', 'photo', 'photo', 'video', 'carousel', 'photo', 'photo', 'video', 'carousel'];
   return Array.from({ length: count }, (_, i) => {
     const type = types[i % types.length];
     const typeKeys = Object.keys(POST_TYPES);
     const postType = typeKeys[i % typeKeys.length];
-    const shortcode = randomShortcode();
+    const shortcode = randomDemoShortcode();
     const likes = Math.floor(Math.random() * 500000) + 10000;
     const comments = Math.floor(Math.random() * 5000) + 50;
     const format = postType === 'video' ? 'MP4' : 'JPEG';
     const resolution = pick(RESOLUTIONS);
     const fileSize = pick(FILE_SIZES);
     const location = pick(LOCATIONS);
-    const date = randomDate();
+    const date = randomDemoDate();
     const caption = pick(CAPTIONS);
-    const colorIdx = (i + Math.floor(Math.random() * 10)) % POST_COLORS.length;
+    const colorIdx = (i + Math.floor(Math.random() * 10)) % DEMO_POST_COLORS.length;
 
     // Хэштеги извлекаем из описания
     const hashtags = caption.match(/#\w+/g) || [];
@@ -350,7 +363,7 @@ function showLoader(username) {
 }
 
 /**
- * Основная функция загрузки профиля (мок)
+ * Основная функция загрузки профиля (demo)
  * @param {string} rawInput - то, что ввёл пользователь
  */
 async function loadProfile(rawInput) {
@@ -361,8 +374,8 @@ async function loadProfile(rawInput) {
     return;
   }
 
-  // Проверяем есть ли профиль в моковых данных
-  const profileData = MOCK_PROFILES[username] || {
+  // Проверяем есть ли профиль в demo data
+  const profileData = DEMO_PROFILES[username] || {
     username,
     fullname: username.charAt(0).toUpperCase() + username.slice(1),
     initials: username.slice(0, 2).toUpperCase(),
@@ -385,7 +398,7 @@ async function loadProfile(rawInput) {
 
   // Обновляем состояние
   state.currentProfile = profileData;
-  state.posts = generatePosts(48);
+  state.posts = generateDemoPosts(48);
   state.selectedPosts.clear();
 
   // Заполняем UI профиля
@@ -462,7 +475,7 @@ function renderStories() {
   const container = document.getElementById('stories-scroll');
   container.innerHTML = '';
 
-  MOCK_STORIES.forEach((story, i) => {
+  DEMO_STORIES.forEach((story, i) => {
     const item = document.createElement('div');
     item.className = 'story-item';
     item.innerHTML = `
@@ -475,7 +488,7 @@ function renderStories() {
     container.appendChild(item);
   });
 
-  document.getElementById('stories-count').textContent = `${MOCK_STORIES.length} highlights`;
+  document.getElementById('stories-count').textContent = `${DEMO_STORIES.length} highlights`;
 }
 
 /* =======================================================
@@ -528,7 +541,7 @@ function createPostCard(post, index) {
   card.dataset.postIndex = index;
 
   const typeInfo = POST_TYPES[post.type];
-  const bgColor = POST_COLORS[post.colorIdx];
+  const bgColor = DEMO_POST_COLORS[post.colorIdx];
 
   card.innerHTML = `
     <!-- Цветная заглушка вместо реального изображения -->
@@ -567,13 +580,13 @@ function createPostCard(post, index) {
           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
-          ${formatNumber(post.likes)}
+          ${formatMetric(post.likes)}
         </div>
         <div class="overlay-stat">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          ${formatNumber(post.comments)}
+          ${formatMetric(post.comments)}
         </div>
       </div>
     </div>
@@ -645,8 +658,8 @@ function openPostPreview(index) {
   document.getElementById('preview-post-date').textContent = post.date;
 
   // Статистика
-  document.getElementById('preview-likes').textContent = formatNumber(post.likes);
-  document.getElementById('preview-comments-count').textContent = formatNumber(post.comments);
+  document.getElementById('preview-likes').textContent = formatMetric(post.likes);
+  document.getElementById('preview-comments-count').textContent = formatMetric(post.comments);
   document.getElementById('preview-type-label').textContent = typeInfo.label;
   document.getElementById('preview-post-id').textContent = `${post.shortcode}`;
 
@@ -684,7 +697,7 @@ function openPostPreview(index) {
 
   // Обновляем фон заглушки в медиа-области
   const placeholder = document.getElementById('preview-img-placeholder');
-  placeholder.querySelector('.placeholder-pattern').style.background = POST_COLORS[post.colorIdx];
+  placeholder.querySelector('.placeholder-pattern').style.background = DEMO_POST_COLORS[post.colorIdx];
 
   // Точки карусели
   const dotsContainer = document.getElementById('carousel-dots');
@@ -798,12 +811,13 @@ function updateEstimate() {
   } else if (state.downloadMode === 'meta-only') {
     count = 0;
   } else if (state.downloadMode === 'all-media') {
-    count = state.currentProfile?.posts || 0;
+    count = state.currentProfile?.postsCount || state.posts.length || 0;
   }
 
-  const filesPerPost = state.options.media ? 2 : 0;
+  const mediaEnabled = state.downloadMode === 'meta-only' ? false : state.options.media;
+  const filesPerPost = mediaEnabled ? 2 : 0;
   const totalFiles = count * filesPerPost;
-  const avgFileMb = state.options.media ? 6.5 : 0.02;
+  const avgFileMb = mediaEnabled ? 6.5 : 0.02;
   const totalMb = (count * avgFileMb).toFixed(0);
 
   document.getElementById('est-posts').textContent = count > 0 ? count.toLocaleString('ru') : '—';
@@ -1088,7 +1102,7 @@ function initEventListeners() {
     if (!state.currentProfile) return;
     showToast('Обновляем данные профиля...', 'ok');
     await showLoader(state.currentProfile.username);
-    state.posts = generatePosts(48);
+    state.posts = generateDemoPosts(48);
     renderPostsGrid();
     showToast('Данные обновлены', 'ok');
   });
@@ -1171,7 +1185,7 @@ function initEventListeners() {
 
   // Кнопка скачивания ZIP
   document.getElementById('btn-download-zip').addEventListener('click', () => {
-    showToast('Скачивание ZIP начато (мок)', 'ok');
+    showToast('Скачивание ZIP начато (demo)', 'ok');
   });
 
   /* --- Панель инструментов постов --- */
@@ -1183,9 +1197,9 @@ function initEventListeners() {
       tab.classList.add('active');
       state.activeTab = tab.dataset.tab;
 
-      // В режиме Reels/Tagged показываем другой набор постов (мок)
+      // В режиме Reels/Tagged показываем другой набор постов (demo)
       if (state.currentProfile) {
-        state.posts = generatePosts(tab.dataset.tab === 'posts' ? 48 : Math.floor(Math.random() * 20) + 5);
+        state.posts = generateDemoPosts(tab.dataset.tab === 'posts' ? 48 : Math.floor(Math.random() * 20) + 5);
         renderPostsGrid();
       }
     });
@@ -1244,7 +1258,7 @@ function initEventListeners() {
     await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
     // Добавляем новые посты
-    const newPosts = generatePosts(24);
+    const newPosts = generateDemoPosts(24);
     const startIdx = state.posts.length;
     newPosts.forEach((p, i) => {
       p.id = startIdx + i;
@@ -1439,8 +1453,8 @@ function init() {
 document.addEventListener('DOMContentLoaded', init);
 
 /* =======================================================
-   API INTEGRATION LAYER
-   Сохраняет визуал макета, заменяя моковые источники на backend
+   REAL API LAYER
+   Сохраняет визуал интерфейса, подключая его к backend.
    ======================================================= */
 
 const apiRuntime = {
@@ -1448,22 +1462,21 @@ const apiRuntime = {
   currentJobId: null,
   pollTimer: null,
   secretFile: null,
-  originalGetFilteredPosts: getFilteredPosts,
-  originalRenderProfile: renderProfile,
-  originalInitEventListeners: initEventListeners,
-  originalOpenAccountsDrawer: openAccountsDrawer,
 };
 
 /**
  * Универсальный JSON/fetch helper для API приложения.
  */
 function apiErrorMessage(data, status) {
+  if (data?.error_code || data?.message) {
+    return data.message || data.error_code || `HTTP ${status}`;
+  }
   const detail = data?.detail || data?.error;
   let message = '';
   if (Array.isArray(detail)) {
     message = detail.map(item => item.msg || item.message || String(item)).join('; ');
   } else if (detail && typeof detail === 'object') {
-    message = detail.msg || detail.message || JSON.stringify(detail);
+    message = detail.message || detail.msg || detail.error_code || JSON.stringify(detail);
   } else {
     message = detail || `HTTP ${status}`;
   }
@@ -1478,7 +1491,7 @@ function apiErrorMessage(data, status) {
 
 async function apiRequest(path, options = {}) {
   const request = {
-    credentials: 'same-origin',
+    credentials: 'include',
     ...options,
   };
   if (request.body && !(request.body instanceof FormData)) {
@@ -1497,6 +1510,8 @@ async function apiRequest(path, options = {}) {
     const message = apiErrorMessage(data, response.status);
     const error = new Error(message);
     error.status = response.status;
+    error.errorCode = data?.error_code || data?.detail?.error_code || null;
+    error.retryAfter = data?.retry_after || data?.detail?.retry_after || null;
     throw error;
   }
   return data;
@@ -1511,77 +1526,136 @@ function captionTags(caption) {
 }
 
 function apiDate(isoDate) {
-  if (!isoDate) return new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
-  return new Date(isoDate).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (!isoDate) return '—';
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function safeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function optionalNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatMetric(value) {
+  return value === null || value === undefined ? '—' : formatNumber(value);
+}
+
+function mediaProxyUrl(url) {
+  return url ? `/api/media/proxy?url=${encodeURIComponent(url)}` : '';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function mapApiProfile(payload) {
   const profile = payload.profile || payload;
-  const username = profile.username || 'instagram';
-  const bio = (profile.biography || '').split('\n').filter(Boolean);
+  const username = profile.username || 'unknown';
+  const bio = (profile.bio ?? profile.biography ?? '').split('\n').filter(Boolean);
+  const postsCount = safeNumber(profile.posts_count, Array.isArray(profile.posts) ? profile.posts.length : 0);
+  const followersCount = safeNumber(profile.followers_count ?? profile.followers, 0);
+  const followingCount = safeNumber(profile.following_count ?? profile.following, 0);
+  const source = payload.source || (payload.from_cache ? 'cache' : 'fresh');
   return {
     username,
-    fullname: profile.fullname || username,
+    fullname: profile.full_name || profile.fullname || username,
     initials: initialsFromUsername(username),
-    bio: bio.length ? bio : ['Профиль Instagram'],
-    link: profile.external_url || null,
-    posts: Number(profile.posts_count || profile.posts?.length || 0),
-    followers: typeof profile.followers === 'number' ? formatNumber(profile.followers) : (profile.followers || '—'),
-    following: Number(profile.following || 0),
+    avatarUrl: profile.profile_pic_url || null,
+    bio,
+    externalUrl: profile.external_url || null,
+    postsCount,
+    followersCount,
+    followingCount,
+    followers: formatNumber(followersCount),
+    following: followingCount,
     verified: Boolean(profile.is_verified),
+    isPrivate: Boolean(profile.is_private),
     type: profile.is_private ? 'Приватный' : 'Публичный',
-    since: payload.from_cache ? 'Превью из кэша' : 'Свежие данные Instaloader',
+    since: source === 'cache' ? 'Превью из кэша' : 'Свежие данные Instagram',
     category: profile.is_private ? 'Private profile' : 'Instagram profile',
     raw: profile,
   };
 }
 
 function mapApiPost(post, index) {
-  const type = post.type || (post.is_video ? 'video' : 'photo');
+  const apiType = post.type === 'image' ? 'photo' : post.type;
+  const allowedTypes = ['photo', 'video', 'carousel', 'unknown'];
+  const type = allowedTypes.includes(apiType) ? apiType : (post.is_video ? 'video' : 'unknown');
   const caption = post.caption || '';
+  const shortcode = typeof post.shortcode === 'string' ? post.shortcode : '';
   return {
-    id: post.shortcode || String(index),
+    id: shortcode,
     type,
-    shortcode: post.shortcode || String(index),
-    likes: Number(post.likes || 0),
-    comments: Number(post.comments || 0),
+    shortcode,
+    likes: optionalNumber(post.likes),
+    comments: optionalNumber(post.comments),
     format: type === 'video' ? 'MP4' : 'JPEG',
-    resolution: post.resolution || 'Instagram',
+    resolution: post.resolution || '—',
     fileSize: post.file_size || '—',
     location: post.location || null,
     date: apiDate(post.date),
+    rawDate: post.date || null,
     caption,
     hashtags: captionTags(caption),
-    colorIdx: index % POST_COLORS.length,
-    carouselCount: type === 'carousel' ? Number(post.carousel_count || 3) : 1,
+    carouselCount: type === 'carousel' ? Math.max(1, safeNumber(post.carousel_count, 1)) : 1,
     previewUrl: post.preview_url || post.url || null,
+    raw: post,
   };
+}
+
+function mapApiPosts(posts) {
+  return (Array.isArray(posts) ? posts : [])
+    .map(mapApiPost)
+    .filter(post => post.shortcode);
 }
 
 function normalizeApiError(error) {
   const message = error.message || 'Ошибка API';
+  const code = error.errorCode || '';
   if (message.includes('Добавьте и проверьте Instagram account')) {
     openAccountsDrawer();
     return 'Добавьте Instagram account в панели Аккаунты: username и пароль достаточно, sessionid не нужен.';
   }
-  if (message.startsWith('LOGIN_REQUIRED') || message.startsWith('CHECKPOINT_REQUIRED')) {
+  if (['LOGIN_REQUIRED', 'INVALID_SESSION', 'CHECKPOINT_REQUIRED'].includes(code) || message.startsWith('LOGIN_REQUIRED') || message.startsWith('CHECKPOINT_REQUIRED')) {
     openAccountsDrawer();
     return 'Instagram session недействительна или требует подтверждения. Обновите account в панели Аккаунты.';
   }
-  if (message.startsWith('TWO_FACTOR_REQUIRED')) {
+  if (code === 'SESSION_COOKIE_MISSING' || message.startsWith('SESSION_COOKIE_MISSING')) {
+    openAccountsDrawer();
+    return 'Instagram не выдал sessionid. Подтвердите вход в Instagram, подождите несколько минут и повторите.';
+  }
+  if (code === 'COOKIES_FORMAT_UNKNOWN' || message.startsWith('COOKIES_FORMAT_UNKNOWN') || message.startsWith('SESSION_FILE_REQUIRED')) {
+    openAccountsDrawer();
+    return 'Instagram-сессия недействительна, обновите cookies/session в панели Аккаунты.';
+  }
+  if (code === 'TWO_FACTOR_REQUIRED' || message.startsWith('TWO_FACTOR_REQUIRED')) {
     document.getElementById('new-account-2fa')?.focus();
     return 'Instagram запросил 2FA-код. Введите код и нажмите “Добавить” ещё раз.';
   }
-  if (message.startsWith('BAD_CREDENTIALS') || message.startsWith('LOGIN_FAILED')) {
+  if (code === 'BAD_CREDENTIALS' || message.startsWith('BAD_CREDENTIALS') || message.startsWith('LOGIN_FAILED')) {
     return 'Instagram не принял логин или пароль. Проверьте данные и возможный checkpoint.';
   }
-  if (message.startsWith('RATE_LIMIT')) {
+  if (code === 'RATE_LIMIT' || message.startsWith('RATE_LIMIT')) {
     return 'Instagram временно ограничил запросы. Подождите несколько минут и попробуйте снова.';
   }
-  if (message.startsWith('NETWORK_ERROR') || message.includes('403 Forbidden')) {
-    return 'Instagram временно отклоняет запрос. Попробуйте позже или перепроверьте sessionid.';
+  if (code === 'PROFILE_NOT_FOUND' || message.startsWith('PROFILE_NOT_FOUND') || error.status === 404) {
+    return 'Профиль Instagram не найден. Проверьте username или ссылку.';
   }
-  if (error.status === 401) {
+  if (code === 'NETWORK_ERROR' || code === 'TIMEOUT' || message.startsWith('NETWORK_ERROR') || message.includes('403 Forbidden')) {
+    return 'Instagram временно отклоняет запрос. Попробуйте позже или обновите cookies/session.';
+  }
+  if (code === 'ADMIN_UNAUTHORIZED' || error.status === 401) {
     openLoginOverlay();
     return 'Нужен вход администратора';
   }
@@ -1690,7 +1764,7 @@ async function bootstrapAuthState() {
   }
 }
 
-async function loadProfile(rawInput) {
+async function loadProfile(rawInput, options = {}) {
   const username = parseInput(rawInput);
   if (!username) {
     showToast('Введите username или ссылку на профиль', 'warn');
@@ -1705,20 +1779,29 @@ async function loadProfile(rawInput) {
     const payload = await apiRequest('/api/profile/preview', {
       method: 'POST',
       body: {
-        target: rawInput,
-        limit: Math.min(state.postsCount || 12, 12),
-        force_refresh: false,
+        target: username,
+        limit: Math.max(1, safeNumber(options.limit, state.postsCount || 30)),
+        force_refresh: Boolean(options.forceRefresh),
       },
     });
+    if (payload?.ok === false) {
+      const error = new Error(payload.message || payload.error_code || 'Ошибка Instagram preview');
+      error.status = 502;
+      error.errorCode = payload.error_code || null;
+      error.retryAfter = payload.retry_after || null;
+      throw error;
+    }
     const profileData = mapApiProfile(payload);
     state.currentProfile = profileData;
-    state.posts = (payload.profile.posts || []).map(mapApiPost);
+    state.posts = mapApiPosts(payload.profile?.posts);
     state.selectedPosts.clear();
+    state.activeTab = 'posts';
+    state.activeFilter = 'all';
     apiRuntime.lastPreview = payload;
     renderProfile(profileData);
     showPage('profile');
     const freshness = document.querySelector('.freshness-text');
-    if (freshness) freshness.textContent = payload.from_cache ? 'Загружено из кэша' : 'Загружено только что';
+    if (freshness) freshness.textContent = (payload.source === 'cache' || payload.from_cache) ? 'Загружено из кэша' : 'Загружено только что';
     showToast(`Профиль @${profileData.username} успешно загружен`, 'ok');
   } catch (error) {
     showToast(normalizeApiError(error), 'err');
@@ -1728,13 +1811,112 @@ async function loadProfile(rawInput) {
   }
 }
 
-renderProfile = function renderProfileWithApiMeta(profile) {
-  apiRuntime.originalRenderProfile(profile);
+function setText(id, value) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value;
+}
+
+function syncToolbarState() {
+  document.querySelectorAll('.posts-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.tab === state.activeTab);
+  });
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.filter === state.activeFilter);
+  });
+}
+
+function renderAvatar(profile) {
+  const avatar = document.getElementById('profile-avatar');
+  const initials = document.getElementById('profile-initials');
+  if (!avatar || !initials) return;
+
+  initials.textContent = profile.initials || initialsFromUsername(profile.username);
+  avatar.classList.remove('profile-avatar-has-image');
+  let image = avatar.querySelector('.profile-avatar-img');
+  if (!image) {
+    image = document.createElement('img');
+    image.className = 'profile-avatar-img';
+    image.alt = '';
+    avatar.prepend(image);
+  }
+
+  image.removeAttribute('src');
+  image.style.display = 'none';
+  if (!profile.avatarUrl) return;
+
+  image.onload = () => {
+    image.style.display = 'block';
+    avatar.classList.add('profile-avatar-has-image');
+  };
+  image.onerror = () => {
+    image.removeAttribute('src');
+    image.style.display = 'none';
+    avatar.classList.remove('profile-avatar-has-image');
+  };
+  image.src = mediaProxyUrl(profile.avatarUrl);
+}
+
+renderProfile = function renderProfileReal(profile) {
+  setText('bc-username', profile.username);
+  renderAvatar(profile);
+
+  const verifiedBadge = document.querySelector('.verified-badge');
+  if (verifiedBadge) verifiedBadge.style.display = profile.verified ? 'flex' : 'none';
+
+  setText('profile-fullname', profile.fullname || profile.username);
+  setText('profile-username', `@${profile.username}`);
+  setText('stat-posts', safeNumber(profile.postsCount, 0).toLocaleString('ru-RU'));
+  setText('stat-followers', profile.followers || formatNumber(profile.followersCount || 0));
+  setText('stat-following', safeNumber(profile.followingCount ?? profile.following, 0).toLocaleString('ru-RU'));
+
   const typeBadge = document.querySelector('.profile-type-badge');
-  if (typeBadge) typeBadge.textContent = profile.type || 'Публичный';
+  if (typeBadge) typeBadge.textContent = profile.type || (profile.isPrivate ? 'Приватный' : 'Публичный');
+
+  const bioEl = document.getElementById('profile-bio');
+  if (bioEl) {
+    bioEl.innerHTML = '';
+    const lines = Array.isArray(profile.bio) ? profile.bio : [];
+    if (lines.length) {
+      lines.forEach(line => {
+        const p = document.createElement('p');
+        p.textContent = line;
+        bioEl.appendChild(p);
+      });
+    } else {
+      const p = document.createElement('p');
+      p.textContent = 'Описание профиля недоступно через текущий API.';
+      bioEl.appendChild(p);
+    }
+    if (profile.externalUrl) {
+      const link = document.createElement('a');
+      link.className = 'bio-link';
+      link.href = profile.externalUrl.startsWith('http') ? profile.externalUrl : `https://${profile.externalUrl}`;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = profile.externalUrl.replace(/^https?:\/\//, '');
+      bioEl.appendChild(link);
+    }
+  }
+
   const metaRows = document.querySelectorAll('.profile-meta .meta-row span');
   if (metaRows[0]) metaRows[0].textContent = profile.since || 'Данные Instaloader';
   if (metaRows[1]) metaRows[1].textContent = profile.category || 'Instagram profile';
+
+  syncToolbarState();
+  renderStories();
+  renderPostsGrid();
+  updateEstimate();
+};
+
+renderStories = function renderStoriesReal() {
+  const container = document.getElementById('stories-scroll');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="story-empty-state">
+      <span>Highlights недоступны через текущий API</span>
+    </div>
+  `;
+  setText('stories-count', '0 highlights');
 };
 
 getFilteredPosts = function getFilteredPostsWithTabs() {
@@ -1746,6 +1928,227 @@ getFilteredPosts = function getFilteredPostsWithTabs() {
   }
   if (state.activeFilter !== 'all') posts = posts.filter(p => p.type === state.activeFilter);
   return posts;
+};
+
+function postsEmptyMessage() {
+  if (state.activeTab === 'tagged') return 'Отмеченные публикации недоступны через текущий API.';
+  if (state.activeTab === 'reels') return 'Видео/Reels не найдены в загруженном preview.';
+  if (state.activeFilter !== 'all') return 'Для выбранного фильтра нет публикаций в текущем preview.';
+  return 'Backend не вернул публикации для этого профиля.';
+}
+
+renderPostsGrid = function renderPostsGridReal() {
+  const grid = document.getElementById('posts-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const posts = getFilteredPosts();
+  grid.classList.toggle('posts-grid-empty', posts.length === 0);
+
+  if (!posts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'posts-empty-state';
+    empty.textContent = postsEmptyMessage();
+    grid.appendChild(empty);
+  } else {
+    posts.forEach((post, index) => {
+      grid.appendChild(createPostCard(post, index));
+    });
+  }
+
+  updateSelectedCounter();
+  const gridEnd = document.getElementById('grid-end');
+  if (gridEnd) {
+    gridEnd.style.display = 'flex';
+    setText('total-loaded', state.posts.length);
+    const totalEl = gridEnd.querySelector('span strong:last-child');
+    if (totalEl) totalEl.textContent = safeNumber(state.currentProfile?.postsCount, state.posts.length).toLocaleString('ru-RU');
+    const loadMore = document.getElementById('btn-load-more');
+    if (loadMore) {
+      loadMore.style.display = state.posts.length < safeNumber(state.currentProfile?.postsCount, state.posts.length) ? 'inline-flex' : 'none';
+    }
+  }
+};
+
+function createPostCard(post, index) {
+  const card = document.createElement('div');
+  const selected = state.selectedPosts.has(post.shortcode);
+  const typeInfo = POST_TYPES[post.type] || POST_TYPES.photo;
+  card.className = `post-card${selected ? ' selected' : ''}`;
+  card.dataset.postId = post.shortcode;
+  card.dataset.postIndex = String(index);
+
+  const imageHtml = post.previewUrl
+    ? `<img class="post-image" src="${mediaProxyUrl(post.previewUrl)}" alt="Preview ${escapeHtml(post.shortcode)}" loading="lazy" referrerpolicy="no-referrer" />`
+    : '';
+
+  card.innerHTML = `
+    <div class="post-media-shell">
+      ${imageHtml}
+      <div class="post-image-fallback${post.previewUrl ? ' is-hidden' : ''}">
+        <span>Preview недоступно</span>
+      </div>
+    </div>
+    <div class="post-type-icon" title="${escapeHtml(typeInfo.label)}">
+      ${typeInfo.icon}
+    </div>
+    <div class="post-checkbox-wrap">
+      <input type="checkbox" class="post-checkbox" ${selected ? 'checked' : ''} />
+    </div>
+    <div class="post-overlay">
+      <div class="post-overlay-stats">
+        <div class="overlay-stat">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+          </svg>
+          ${formatMetric(post.likes)}
+        </div>
+        <div class="overlay-stat">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          ${formatMetric(post.comments)}
+        </div>
+      </div>
+    </div>
+  `;
+
+  const image = card.querySelector('.post-image');
+  const fallback = card.querySelector('.post-image-fallback');
+  image?.addEventListener('error', () => {
+    image.style.display = 'none';
+    fallback?.classList.remove('is-hidden');
+  });
+
+  card.addEventListener('click', (event) => {
+    if (event.target.classList.contains('post-checkbox')) return;
+    openPostPreview(index);
+  });
+
+  const checkbox = card.querySelector('.post-checkbox');
+  checkbox.addEventListener('change', (event) => {
+    event.stopPropagation();
+    togglePostSelection(post.shortcode, card, checkbox.checked);
+  });
+
+  return card;
+}
+
+function syncPostSelectionUi(postId, selected) {
+  document.querySelectorAll('.post-card').forEach(card => {
+    if (card.dataset.postId !== postId) return;
+    card.classList.toggle('selected', selected);
+    const checkbox = card.querySelector('.post-checkbox');
+    if (checkbox) checkbox.checked = selected;
+  });
+  const previewCheckbox = document.getElementById('preview-post-checkbox');
+  const posts = getFilteredPosts();
+  if (posts[state.previewPostIndex]?.shortcode === postId && previewCheckbox) {
+    previewCheckbox.checked = selected;
+  }
+}
+
+function addPostToSelection(post, message) {
+  if (!post) return;
+  state.selectedPosts.add(post.shortcode);
+  syncPostSelectionUi(post.shortcode, true);
+  updateSelectedCounter();
+  updateEstimate();
+  showToast(message || `Пост ${post.shortcode} добавлен в выборку`, 'ok');
+}
+
+function setDownloadMode(mode) {
+  state.downloadMode = mode;
+  document.querySelectorAll('input[name="dl-mode"]').forEach(radio => {
+    radio.checked = radio.value === mode;
+  });
+  document.querySelectorAll('.mode-card').forEach(card => card.classList.remove('active'));
+  const activeRadio = document.querySelector(`input[name="dl-mode"][value="${mode}"]`);
+  const activeCard = activeRadio?.closest('.mode-option')?.querySelector('.mode-card');
+  activeCard?.classList.add('active');
+  const paramEl = document.getElementById('param-last-n');
+  if (paramEl) paramEl.style.display = mode === 'last-n' ? 'block' : 'none';
+  updateEstimate();
+}
+
+openPostPreview = function openPostPreviewReal(index) {
+  const posts = getFilteredPosts();
+  if (index < 0 || index >= posts.length) return;
+
+  state.previewPostIndex = index;
+  const post = posts[index];
+  const typeInfo = POST_TYPES[post.type] || POST_TYPES.photo;
+
+  setText('preview-author-avatar', state.currentProfile?.initials || initialsFromUsername(state.currentProfile?.username || 'IG'));
+  setText('preview-author-name', state.currentProfile?.username || 'unknown');
+  setText('preview-post-date', post.date || '—');
+  setText('preview-likes', formatMetric(post.likes));
+  setText('preview-comments-count', formatMetric(post.comments));
+  setText('preview-type-label', typeInfo.label);
+  setText('preview-post-id', post.shortcode);
+
+  const mediaType = document.getElementById('preview-media-type');
+  if (mediaType) {
+    mediaType.innerHTML = `${typeInfo.icon}<span>${escapeHtml(typeInfo.label)}</span>`;
+    mediaType.style.display = 'flex';
+  }
+
+  const content = document.getElementById('preview-media-content');
+  if (content) {
+    content.innerHTML = post.previewUrl
+      ? `
+        <img class="preview-real-image" src="${mediaProxyUrl(post.previewUrl)}" alt="Preview ${escapeHtml(post.shortcode)}" referrerpolicy="no-referrer" />
+        <div class="preview-fallback is-hidden">Preview недоступно</div>
+      `
+      : '<div class="preview-fallback">Preview недоступно</div>';
+    const image = content.querySelector('.preview-real-image');
+    const fallback = content.querySelector('.preview-fallback');
+    image?.addEventListener('error', () => {
+      image.style.display = 'none';
+      fallback?.classList.remove('is-hidden');
+    });
+  }
+
+  const captionEl = document.getElementById('preview-caption');
+  captionEl.textContent = post.caption || 'Caption недоступен.';
+  captionEl.classList.remove('expanded');
+  setText('caption-toggle', 'Читать полностью');
+
+  const hashEl = document.getElementById('preview-hashtags');
+  hashEl.innerHTML = '';
+  post.hashtags.forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'hashtag-chip';
+    chip.textContent = tag;
+    hashEl.appendChild(chip);
+  });
+
+  const locationEl = document.getElementById('preview-location');
+  if (post.location) {
+    locationEl.style.display = 'flex';
+    setText('preview-location-text', post.location);
+  } else {
+    locationEl.style.display = 'none';
+  }
+
+  setText('pm-shortcode', post.shortcode);
+  setText('pm-resolution', post.resolution || '—');
+  setText('pm-format', post.format || '—');
+  setText('pm-size', post.fileSize || '—');
+  setText('pm-timestamp', post.rawDate || post.date || '—');
+
+  const dotsContainer = document.getElementById('carousel-dots');
+  dotsContainer.innerHTML = '';
+  if (post.type === 'carousel' && post.carouselCount > 1) {
+    for (let i = 0; i < post.carouselCount; i += 1) {
+      const dot = document.createElement('div');
+      dot.className = `carousel-dot${i === 0 ? ' active' : ''}`;
+      dotsContainer.appendChild(dot);
+    }
+  }
+
+  document.getElementById('preview-post-checkbox').checked = state.selectedPosts.has(post.shortcode);
+  document.getElementById('post-preview-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
 };
 
 async function startDownload() {
@@ -1780,7 +2183,7 @@ async function startDownload() {
         shortcodes: state.downloadMode === 'selected' ? Array.from(state.selectedPosts) : [],
         limit: state.postsCount,
         options: {
-          media: state.options.media,
+          media: state.downloadMode === 'meta-only' ? false : state.options.media,
           comments: state.options.comments,
           stories: state.options.stories,
           zip: state.options.zip,
@@ -1864,7 +2267,7 @@ function restoreStartButton() {
 }
 
 openAccountsDrawer = async function openAccountsDrawerApi() {
-  apiRuntime.originalOpenAccountsDrawer();
+  document.getElementById('accounts-drawer-overlay')?.classList.add('open');
   renderAccountsLoading();
   await loadAccountsFromApi();
 };
@@ -2203,7 +2606,7 @@ async function refreshJobsHistory() {
       list.appendChild(item);
     });
   } catch {
-    // История задач не должна ломать макет при неавторизованном состоянии.
+    // История задач не должна ломать UI при неавторизованном состоянии.
   }
 }
 
@@ -2258,6 +2661,162 @@ function setFormBusy(form, busy, busyText) {
 function bindApiEventListeners() {
   if (window.__archiverApiBound) return;
   window.__archiverApiBound = true;
+
+  const searchInput = document.getElementById('search-input');
+  const clearBtn = document.getElementById('btn-clear-input');
+  searchInput?.addEventListener('input', () => {
+    clearBtn.style.display = searchInput.value ? 'flex' : 'none';
+  });
+  clearBtn?.addEventListener('click', () => {
+    searchInput.value = '';
+    clearBtn.style.display = 'none';
+    searchInput.focus();
+  });
+  searchInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') loadProfile(searchInput.value);
+  });
+  document.getElementById('btn-search')?.addEventListener('click', () => {
+    loadProfile(searchInput.value);
+  });
+  document.querySelectorAll('.hint-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      searchInput.value = chip.dataset.val;
+      clearBtn.style.display = 'flex';
+      loadProfile(chip.dataset.val);
+    });
+  });
+  document.getElementById('btn-clear-history')?.addEventListener('click', () => {
+    state.searchHistory = [];
+    renderHistory();
+    showToast('История поиска очищена', 'ok');
+  });
+  document.getElementById('btn-open-accounts')?.addEventListener('click', openAccountsDrawer);
+  document.getElementById('btn-open-accounts-2')?.addEventListener('click', openAccountsDrawer);
+  document.getElementById('btn-back')?.addEventListener('click', () => {
+    if (state.isDownloading) stopDownload();
+    showPage('search');
+  });
+
+  document.querySelectorAll('input[name="dl-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => setDownloadMode(radio.value));
+  });
+  const rangeSlider = document.getElementById('range-posts-count');
+  rangeSlider?.addEventListener('input', () => {
+    state.postsCount = parseInt(rangeSlider.value, 10);
+    setText('range-val', state.postsCount);
+    updateEstimate();
+  });
+  document.querySelectorAll('.toggle-switch').forEach(toggleSwitch => {
+    toggleSwitch.addEventListener('click', () => {
+      const isOn = toggleSwitch.dataset.state === 'on';
+      toggleSwitch.dataset.state = isOn ? 'off' : 'on';
+      const id = toggleSwitch.id;
+      if (id === 'toggle-media') state.options.media = !isOn;
+      if (id === 'toggle-comments') state.options.comments = !isOn;
+      if (id === 'toggle-stories') state.options.stories = !isOn;
+      if (id === 'toggle-zip') state.options.zip = !isOn;
+      updateEstimate();
+    });
+  });
+
+  document.getElementById('btn-start-download')?.addEventListener('click', startDownload);
+  document.getElementById('btn-pause')?.addEventListener('click', pauseDownload);
+  document.getElementById('btn-stop')?.addEventListener('click', stopDownload);
+
+  document.getElementById('btn-select-all')?.addEventListener('click', () => {
+    const posts = getFilteredPosts();
+    posts.forEach(post => state.selectedPosts.add(post.shortcode));
+    document.querySelectorAll('.post-card').forEach(card => {
+      card.classList.add('selected');
+      const checkbox = card.querySelector('.post-checkbox');
+      if (checkbox) checkbox.checked = true;
+    });
+    updateSelectedCounter();
+    updateEstimate();
+    showToast(`Выбрано ${posts.length} публикаций`, 'ok');
+  });
+  document.getElementById('btn-deselect-all')?.addEventListener('click', () => {
+    state.selectedPosts.clear();
+    document.querySelectorAll('.post-card').forEach(card => {
+      card.classList.remove('selected');
+      const checkbox = card.querySelector('.post-checkbox');
+      if (checkbox) checkbox.checked = false;
+    });
+    updateSelectedCounter();
+    updateEstimate();
+  });
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip').forEach(item => item.classList.remove('active'));
+      chip.classList.add('active');
+      state.activeFilter = chip.dataset.filter;
+      if (state.currentProfile) renderPostsGrid();
+    });
+  });
+
+  document.getElementById('modal-close')?.addEventListener('click', closePostPreview);
+  document.getElementById('post-preview-overlay')?.addEventListener('click', (event) => {
+    if (event.target === document.getElementById('post-preview-overlay')) closePostPreview();
+  });
+  document.getElementById('modal-prev')?.addEventListener('click', () => navigatePreview(-1));
+  document.getElementById('modal-next')?.addEventListener('click', () => navigatePreview(+1));
+  document.addEventListener('keydown', (event) => {
+    if (!document.getElementById('post-preview-overlay')?.classList.contains('open')) return;
+    if (event.key === 'Escape') closePostPreview();
+    if (event.key === 'ArrowLeft') navigatePreview(-1);
+    if (event.key === 'ArrowRight') navigatePreview(+1);
+  });
+  document.getElementById('caption-toggle')?.addEventListener('click', () => {
+    const caption = document.getElementById('preview-caption');
+    const button = document.getElementById('caption-toggle');
+    caption.classList.toggle('expanded');
+    button.textContent = caption.classList.contains('expanded') ? 'Свернуть' : 'Читать полностью';
+  });
+  document.getElementById('preview-post-checkbox')?.addEventListener('change', (event) => {
+    const post = getFilteredPosts()[state.previewPostIndex];
+    if (!post) return;
+    if (event.target.checked) {
+      state.selectedPosts.add(post.shortcode);
+    } else {
+      state.selectedPosts.delete(post.shortcode);
+    }
+    syncPostSelectionUi(post.shortcode, event.target.checked);
+    updateSelectedCounter();
+    updateEstimate();
+  });
+
+  document.getElementById('drawer-close')?.addEventListener('click', closeAccountsDrawer);
+  document.getElementById('accounts-drawer-overlay')?.addEventListener('click', (event) => {
+    if (event.target === document.getElementById('accounts-drawer-overlay')) closeAccountsDrawer();
+  });
+  document.getElementById('btn-add-account')?.addEventListener('click', () => {
+    const form = document.getElementById('add-account-form');
+    form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+  });
+  document.getElementById('btn-cancel-add')?.addEventListener('click', () => {
+    document.getElementById('add-account-form').style.display = 'none';
+    document.getElementById('new-account-username').value = '';
+    document.getElementById('new-account-password').value = '';
+    document.getElementById('new-account-2fa').value = '';
+    document.getElementById('new-account-secret-value').value = '';
+    apiRuntime.secretFile = null;
+    resetDropZone();
+  });
+  const dropZone = document.getElementById('session-drop-zone');
+  dropZone?.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropZone.style.borderColor = 'var(--orange)';
+    dropZone.style.background = 'var(--orange-glow)';
+  });
+  dropZone?.addEventListener('dragleave', () => {
+    dropZone.style.borderColor = '';
+    dropZone.style.background = '';
+  });
+  document.querySelectorAll('.platform-btn.platform-coming').forEach(button => {
+    button.addEventListener('click', () => {
+      showToast(`${button.dataset.platform} — будет доступно в следующей версии`, 'warn');
+    });
+  });
 
   document.getElementById('setup-form').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2347,8 +2906,7 @@ function bindApiEventListeners() {
     resetDropZone();
   });
 
-  const dropZone = document.getElementById('session-drop-zone');
-  dropZone.addEventListener('drop', (event) => {
+  dropZone?.addEventListener('drop', (event) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     const file = event.dataTransfer.files[0];
@@ -2363,10 +2921,44 @@ function bindApiEventListeners() {
   bindSecretModeToggle();
 
   document.getElementById('btn-download-zip').addEventListener('click', (event) => {
-    if (!apiRuntime.currentJobId) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (!apiRuntime.currentJobId) {
+      showToast('ZIP доступен только после завершения реальной задачи', 'warn');
+      return;
+    }
     window.location.href = `/api/jobs/${apiRuntime.currentJobId}/download`;
+  }, true);
+
+  document.getElementById('btn-refresh-profile').addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!state.currentProfile) return;
+    await loadProfile(state.currentProfile.username, { forceRefresh: true, limit: Math.max(state.posts.length, state.postsCount || 30) });
+  }, true);
+
+  document.getElementById('btn-preview-download').addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const post = getFilteredPosts()[state.previewPostIndex];
+    if (!post) {
+      showToast('Пост не найден', 'warn');
+      return;
+    }
+    setDownloadMode('selected');
+    addPostToSelection(post, `Пост ${post.shortcode} добавлен в выборку`);
+  }, true);
+
+  document.getElementById('btn-preview-meta').addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const post = getFilteredPosts()[state.previewPostIndex];
+    if (!post) return;
+    setDownloadMode('selected');
+    state.options.media = false;
+    const mediaToggle = document.getElementById('toggle-media');
+    if (mediaToggle) mediaToggle.dataset.state = 'off';
+    addPostToSelection(post, `Пост ${post.shortcode} добавлен в выборку для JSON`);
   }, true);
 
   document.getElementById('btn-load-more').addEventListener('click', async (event) => {
@@ -2379,9 +2971,15 @@ function bindApiEventListeners() {
         method: 'POST',
         body: { target: state.currentProfile.username, limit: nextLimit, force_refresh: true },
       });
+      if (payload?.ok === false) {
+        const error = new Error(payload.message || payload.error_code || 'Ошибка Instagram preview');
+        error.status = 502;
+        error.errorCode = payload.error_code || null;
+        throw error;
+      }
       const profileData = mapApiProfile(payload);
       state.currentProfile = profileData;
-      state.posts = (payload.profile.posts || []).map(mapApiPost);
+      state.posts = mapApiPosts(payload.profile?.posts);
       renderProfile(profileData);
       showToast(`Загружено ${state.posts.length} публикаций`, 'ok');
     } catch (error) {
@@ -2405,6 +3003,5 @@ function bindApiEventListeners() {
 }
 
 initEventListeners = function initEventListenersWithApi() {
-  apiRuntime.originalInitEventListeners();
   bindApiEventListeners();
 };

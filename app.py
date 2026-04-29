@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import mimetypes
 import os
 from collections import defaultdict, deque
 from datetime import timedelta
 from pathlib import Path
 from time import monotonic
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlparse
+from urllib.request import Request as UrlRequest, urlopen
 
 from alembic import command
 from alembic.config import Config as AlembicConfig
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, func, select, text
 
@@ -65,6 +70,62 @@ _scheduler_task: asyncio.Task | None = None
 _auth_attempts: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 AUTH_RATE_LIMIT_WINDOW_SEC = 60
 AUTH_RATE_LIMIT_MAX_ATTEMPTS = 8
+MEDIA_PROXY_ALLOWED_HOST_SUFFIXES = ("instagram.com", "cdninstagram.com", "fbcdn.net")
+MEDIA_PROXY_TIMEOUT_SEC = 15
+MEDIA_PROXY_MAX_BYTES = 15 * 1024 * 1024
+TRANSIENT_ACCOUNT_FAILURES = {"NETWORK_ERROR", "RATE_LIMIT", "SESSION_COOKIE_MISSING", "TIMEOUT", "UPSTREAM_502"}
+AUTH_ACCOUNT_FAILURES = {
+    "BAD_CREDENTIALS",
+    "LOGIN_FAILED",
+    "LOGIN_REQUIRED",
+    "INVALID_SESSION",
+    "CHECKPOINT_REQUIRED",
+    "SESSION_FILE_REQUIRED",
+    "COOKIES_FORMAT_UNKNOWN",
+}
+PROVIDER_ERROR_HTTP_STATUS = {
+    "VALIDATION_ERROR": 422,
+    "BAD_CREDENTIALS": 401,
+    "LOGIN_FAILED": 401,
+    "TWO_FACTOR_REQUIRED": 409,
+    "SESSION_FILE_REQUIRED": 400,
+    "COOKIES_FORMAT_UNKNOWN": 400,
+    "SESSION_COOKIE_MISSING": 401,
+    "LOGIN_REQUIRED": 401,
+    "INVALID_SESSION": 401,
+    "CHECKPOINT_REQUIRED": 401,
+    "PRIVATE_PROFILE": 403,
+    "PROFILE_NOT_FOUND": 404,
+    "RATE_LIMIT": 429,
+    "NETWORK_ERROR": 502,
+    "TIMEOUT": 504,
+    "UPSTREAM_502": 502,
+    "INSTALOADER_NOT_INSTALLED": 503,
+    "PROVIDER_ERROR": 502,
+    "UNKNOWN_ERROR": 502,
+    "UNKNOWN": 502,
+}
+PROVIDER_ERROR_MESSAGES = {
+    "ADMIN_UNAUTHORIZED": "Нужен вход администратора",
+    "PROFILE_NOT_FOUND": "Профиль Instagram не найден",
+    "LOGIN_REQUIRED": "Instagram-сессия недействительна, обновите cookies/session",
+    "INVALID_SESSION": "Instagram-сессия недействительна, обновите cookies/session",
+    "CHECKPOINT_REQUIRED": "Instagram требует подтверждения входа",
+    "COOKIES_FORMAT_UNKNOWN": "Cookies/session не распознаны, обновите account",
+    "BAD_CREDENTIALS": "Instagram не принял логин или пароль",
+    "SESSION_COOKIE_MISSING": "Instagram не выдал sessionid, подтвердите вход и повторите",
+    "RATE_LIMIT": "Временный rate limit Instagram. Повторите позже",
+    "NETWORK_ERROR": "Instagram временно недоступен или отклонил запрос",
+    "TIMEOUT": "Instagram не ответил вовремя",
+    "PROVIDER_ERROR": "Instagram provider вернул ошибку",
+    "UNKNOWN_ERROR": "Неизвестная ошибка Instagram provider",
+}
+PROVIDER_REASON_ALIASES = {
+    "LOGIN_FAILED": "BAD_CREDENTIALS",
+    "SESSION_FILE_REQUIRED": "INVALID_SESSION",
+    "INSTALOADER_NOT_INSTALLED": "PROVIDER_ERROR",
+    "UNKNOWN": "UNKNOWN_ERROR",
+}
 
 
 @app.on_event("startup")
@@ -217,7 +278,7 @@ async def current_admin(request: Request, db=Depends(get_session)) -> AdminUser:
     """FastAPI dependency: требует активную admin cookie-сессию."""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token:
-        raise HTTPException(status_code=401, detail="Нужен вход администратора")
+        _raise_admin_unauthorized()
     session = (
         await db.execute(
             select(AdminSession).where(
@@ -227,10 +288,10 @@ async def current_admin(request: Request, db=Depends(get_session)) -> AdminUser:
         )
     ).scalar_one_or_none()
     if session is None:
-        raise HTTPException(status_code=401, detail="Нужен вход администратора")
+        _raise_admin_unauthorized()
     user = await db.get(AdminUser, session.user_id)
     if user is None:
-        raise HTTPException(status_code=401, detail="Нужен вход администратора")
+        _raise_admin_unauthorized()
     return user
 
 
@@ -238,6 +299,25 @@ async def current_admin(request: Request, db=Depends(get_session)) -> AdminUser:
 async def auth_me(user: AdminUser = Depends(current_admin)):
     """Возвращает текущего admin-пользователя."""
     return {"username": user.username}
+
+
+@app.get("/api/media/proxy")
+async def media_proxy(url: str, user: AdminUser = Depends(current_admin)):
+    """Безопасно проксирует preview images Instagram/CDN для авторизованного admin."""
+    media_url = unquote(url).strip()
+    parsed = urlparse(media_url)
+    if parsed.scheme != "https":
+        raise HTTPException(status_code=400, detail="Media proxy accepts only https URLs")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not _is_allowed_media_proxy_host(host):
+        raise HTTPException(status_code=400, detail="Media proxy host is not allowed")
+
+    try:
+        content, content_type = await asyncio.to_thread(_fetch_media_proxy_bytes, media_url)
+    except (HTTPError, URLError, TimeoutError, ValueError, OSError) as exc:
+        logger.info("Media proxy upstream failed for allowed host %s: %s", host, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Не удалось загрузить preview image") from exc
+    return Response(content=content, media_type=content_type)
 
 
 @app.get("/api/settings")
@@ -362,7 +442,10 @@ async def validate_account(account_id: str, user: AdminUser = Depends(current_ad
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     ok, reason = await instagram_provider.validate_account(account)
-    account.status = "OK" if ok else "INVALID_SESSION"
+    if ok:
+        account.status = "OK"
+    elif reason not in TRANSIENT_ACCOUNT_FAILURES:
+        account.status = "INVALID_SESSION"
     account.failure_reason = reason
     account.last_validated_at = utcnow()
     await db.commit()
@@ -388,7 +471,7 @@ async def profile_preview(
     user: AdminUser = Depends(current_admin),
     db=Depends(get_session),
 ):
-    """Возвращает preview профиля из кэша или через Instaloader."""
+    """Возвращает preview профиля из кэша или через выбранный Instagram provider."""
     settings = await get_settings_map(db)
     try:
         username = instagram_provider.normalize_target(payload.target)
@@ -398,20 +481,46 @@ async def profile_preview(
     now = utcnow()
 
     cache = await db.get(ProfileCache, username)
-    if cache and cache.expires_at > now and not payload.force_refresh:
-        return ProfilePreviewResponse(from_cache=True, cached_until=cache.expires_at, profile=cache.payload)
+    if cache and cache.expires_at > now and not payload.force_refresh and _preview_cache_is_usable(cache, limit):
+        cached_profile = _normalize_preview_payload(cache.payload)
+        logger.info("profile_preview_success provider=%s target=%s source=cache", _provider_name(), username)
+        return ProfilePreviewResponse(
+            ok=True,
+            source="cache",
+            from_cache=True,
+            cached_until=cache.expires_at,
+            profile=cached_profile,
+            error=None,
+        )
 
     if await find_active_job(db):
-        if cache:
-            return ProfilePreviewResponse(from_cache=True, cached_until=cache.expires_at, profile=cache.payload)
+        if cache and cache.expires_at > now and _preview_cache_is_usable(cache, limit):
+            cached_profile = _normalize_preview_payload(cache.payload)
+            logger.info("profile_preview_success provider=%s target=%s source=cache", _provider_name(), username)
+            return ProfilePreviewResponse(
+                ok=True,
+                source="cache",
+                from_cache=True,
+                cached_until=cache.expires_at,
+                profile=cached_profile,
+                error=None,
+            )
         raise HTTPException(status_code=409, detail="Активная задача выполняется; превью доступно только из кэша")
 
     account = await _default_account(db)
     try:
         preview = await instagram_provider.profile_preview(account, username, limit)
+        preview = _normalize_preview_payload(preview)
     except ProviderError as exc:
         await _mark_account_failed(db, account, exc)
-        _raise_provider_http(exc)
+        error_code = _normalize_provider_error_code(exc)
+        logger.info(
+            "profile_preview_failed provider=%s target=%s error_code=%s",
+            _provider_name(),
+            username,
+            error_code,
+        )
+        return _provider_error_json_response(exc)
     ttl = int(settings.get("preview_cache_ttl_sec", DEFAULT_SETTINGS["preview_cache_ttl_sec"]))
     expires_at = now + timedelta(seconds=ttl)
 
@@ -424,7 +533,15 @@ async def profile_preview(
         cache.expires_at = expires_at
         cache.account_id = account.id
     await db.commit()
-    return ProfilePreviewResponse(from_cache=False, cached_until=expires_at, profile=preview)
+    logger.info("profile_preview_success provider=%s target=%s source=fresh", _provider_name(), username)
+    return ProfilePreviewResponse(
+        ok=True,
+        source="fresh",
+        from_cache=False,
+        cached_until=expires_at,
+        profile=preview,
+        error=None,
+    )
 
 
 @app.post("/api/jobs/create", response_model=JobStatusResponse)
@@ -448,21 +565,26 @@ async def create_job(
     if payload.mode != "selected":
         limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
         cache = await db.get(ProfileCache, username)
-        if cache is None:
+        if cache is None or not _preview_cache_is_usable(cache, limit):
             try:
                 preview = await instagram_provider.profile_preview(account, username, limit)
             except ProviderError as exc:
                 await _mark_account_failed(db, account, exc)
                 _raise_provider_http(exc)
-            cache = ProfileCache(
-                username=username,
-                payload=preview,
-                fetched_at=utcnow(),
-                expires_at=utcnow(),
-                account_id=account.id,
-            )
-            db.add(cache)
-            await db.flush()
+            if cache is None:
+                cache = ProfileCache(
+                    username=username,
+                    payload=preview,
+                    fetched_at=utcnow(),
+                    expires_at=utcnow(),
+                    account_id=account.id,
+                )
+                db.add(cache)
+                await db.flush()
+            else:
+                cache.payload = preview
+                cache.fetched_at = utcnow()
+                cache.account_id = account.id
         posts = cache.payload.get("posts", [])
         shortcodes = [post["shortcode"] for post in posts[:limit]]
 
@@ -591,7 +713,10 @@ async def _store_account_secret(
         ok, reason = True, None
     else:
         ok, reason = await instagram_provider.validate_account(account)
-    account.status = "OK" if ok else "INVALID_SESSION"
+    if ok:
+        account.status = "OK"
+    elif reason not in TRANSIENT_ACCOUNT_FAILURES:
+        account.status = "INVALID_SESSION"
     account.failure_reason = reason
     account.last_validated_at = utcnow()
     await db.commit()
@@ -601,7 +726,7 @@ async def _store_account_secret(
 
 async def _mark_account_failed(db, account: Account, exc: ProviderError) -> None:
     """Помечает текущий Instagram account невалидным при ошибке auth/secret."""
-    if exc.reason in {"LOGIN_REQUIRED", "CHECKPOINT_REQUIRED", "SESSION_FILE_REQUIRED", "COOKIES_FORMAT_UNKNOWN"}:
+    if exc.reason in AUTH_ACCOUNT_FAILURES:
         account.status = "INVALID_SESSION"
         account.failure_reason = exc.reason
         account.last_validated_at = utcnow()
@@ -669,6 +794,131 @@ def _job_response(job: Job) -> JobStatusResponse:
     )
 
 
+def _is_allowed_media_proxy_host(host: str) -> bool:
+    """Проверяет allowlist host без превращения proxy в открытый SSRF endpoint."""
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    except ValueError:
+        pass
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in MEDIA_PROXY_ALLOWED_HOST_SUFFIXES)
+
+
+def _fetch_media_proxy_bytes(media_url: str) -> tuple[bytes, str]:
+    """Синхронная загрузка media bytes для запуска через asyncio.to_thread."""
+    request = UrlRequest(
+        media_url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/121.0 Safari/537.36"
+            ),
+            "Referer": "https://www.instagram.com/",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    with urlopen(request, timeout=MEDIA_PROXY_TIMEOUT_SEC) as upstream:
+        final_url = urlparse(upstream.geturl())
+        final_host = (final_url.hostname or "").lower().rstrip(".")
+        if final_url.scheme != "https" or not _is_allowed_media_proxy_host(final_host):
+            raise ValueError("Media proxy upstream redirect is not allowed")
+        content_type = upstream.headers.get("content-type")
+        if not content_type:
+            guessed, _ = mimetypes.guess_type(urlparse(media_url).path)
+            content_type = guessed or "application/octet-stream"
+        content_type = content_type.split(";", 1)[0].strip().lower()
+        if not content_type.startswith("image/"):
+            raise ValueError("Upstream media is not an image")
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = upstream.read(64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MEDIA_PROXY_MAX_BYTES:
+                raise ValueError("Media proxy response is too large")
+            chunks.append(chunk)
+    return b"".join(chunks), content_type
+
+
+def _normalize_preview_payload(payload: dict) -> dict:
+    """Приводит fresh/legacy cache payload к frontend Real API contract без fake data."""
+    source = payload if isinstance(payload, dict) else {}
+    profile = dict(source)
+
+    if "full_name" not in profile and "fullname" in profile:
+        profile["full_name"] = profile.get("fullname")
+    if "bio" not in profile and "biography" in profile:
+        profile["bio"] = profile.get("biography")
+    if "followers_count" not in profile and "followers" in profile:
+        profile["followers_count"] = _optional_int(profile.get("followers"))
+    if "following_count" not in profile and "following" in profile:
+        profile["following_count"] = _optional_int(profile.get("following"))
+
+    raw_posts = profile.get("posts")
+    posts = raw_posts if isinstance(raw_posts, list) else []
+    normalized_posts = [_normalize_preview_post(post) for post in posts if isinstance(post, dict)]
+    profile["posts"] = [post for post in normalized_posts if post.get("shortcode")]
+    profile["posts_count"] = _optional_int(profile.get("posts_count")) or len(profile["posts"])
+    profile["profile_pic_url"] = profile.get("profile_pic_url") or None
+    profile["external_url"] = profile.get("external_url") or None
+    profile["is_private"] = bool(profile.get("is_private", False))
+    profile["is_verified"] = bool(profile.get("is_verified", False))
+    profile.setdefault("bio", None)
+    profile.setdefault("full_name", None)
+    profile.setdefault("followers_count", None)
+    profile.setdefault("following_count", None)
+    return profile
+
+
+def _normalize_preview_post(post: dict) -> dict:
+    """Нормализует post preview, сохраняя только реальные provider поля."""
+    shortcode = post.get("shortcode")
+    post_type = post.get("type")
+    if post_type == "photo":
+        post_type = "image"
+    if post_type not in {"image", "video", "carousel", "unknown"}:
+        post_type = "video" if post.get("is_video") else "unknown"
+    return {
+        "shortcode": shortcode,
+        "id": str(post.get("id") or post.get("mediaid") or shortcode) if (post.get("id") or post.get("mediaid") or shortcode) else None,
+        "type": post_type,
+        "preview_url": post.get("preview_url") or post.get("url") or None,
+        "caption": post.get("caption") or None,
+        "date": post.get("date") or None,
+        "likes": _optional_int(post.get("likes")),
+        "comments": _optional_int(post.get("comments")),
+        "is_video": bool(post.get("is_video") or post_type == "video"),
+    }
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _preview_cache_is_usable(cache: ProfileCache, requested_limit: int) -> bool:
+    """Не отдаёт пустой/битый preview cache как успешную загрузку профиля."""
+    payload = cache.payload if isinstance(cache.payload, dict) else {}
+    posts = payload.get("posts")
+    if not isinstance(posts, list):
+        posts = []
+    try:
+        posts_count = int(payload.get("posts_count") or 0)
+    except (TypeError, ValueError):
+        posts_count = 0
+    if posts_count == 0:
+        return True
+    expected = max(1, min(int(requested_limit or 1), posts_count))
+    return len(posts) >= expected
+
+
 def _check_auth_rate_limit(request: Request, action: str) -> None:
     """Простой in-memory rate limit для локальных auth endpoints."""
     now = monotonic()
@@ -684,26 +934,54 @@ def _check_auth_rate_limit(request: Request, action: str) -> None:
     attempts.append(now)
 
 
+def _provider_name() -> str:
+    """Возвращает безопасное имя активного preview provider для логов."""
+    return getattr(instagram_provider, "provider_name", type(instagram_provider).__name__)
+
+
+def _normalize_provider_error_code(exc: ProviderError) -> str:
+    """Преобразует внутренние provider reasons в публичные error_code."""
+    return PROVIDER_REASON_ALIASES.get(exc.reason, exc.reason if exc.reason in PROVIDER_ERROR_HTTP_STATUS else "UNKNOWN_ERROR")
+
+
+def _provider_error_payload(exc: ProviderError) -> dict[str, object]:
+    """Единый JSON-контракт ошибок Instagram provider без raw traceback/secret values."""
+    error_code = _normalize_provider_error_code(exc)
+    message = PROVIDER_ERROR_MESSAGES.get(error_code) or exc.message or error_code
+    return {
+        "ok": False,
+        "error_code": error_code,
+        "message": message,
+        "retry_after": None,
+    }
+
+
+def _provider_error_json_response(exc: ProviderError) -> JSONResponse:
+    """Возвращает structured error response для preview endpoint."""
+    status_code = PROVIDER_ERROR_HTTP_STATUS.get(exc.reason)
+    if status_code is None:
+        status_code = PROVIDER_ERROR_HTTP_STATUS.get(_normalize_provider_error_code(exc), 502)
+    return JSONResponse(status_code=status_code, content=_provider_error_payload(exc))
+
+
+def _raise_admin_unauthorized() -> None:
+    """Возвращает структурированную auth-ошибку без раскрытия деталей session cookie."""
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "error_code": "ADMIN_UNAUTHORIZED",
+            "message": PROVIDER_ERROR_MESSAGES["ADMIN_UNAUTHORIZED"],
+            "retry_after": None,
+        },
+    )
+
+
 def _raise_provider_http(exc: ProviderError) -> None:
     """Преобразует ошибки Instagram provider в понятные HTTP-ответы."""
-    status_map = {
-        "VALIDATION_ERROR": 422,
-        "BAD_CREDENTIALS": 401,
-        "LOGIN_FAILED": 401,
-        "TWO_FACTOR_REQUIRED": 409,
-        "SESSION_FILE_REQUIRED": 400,
-        "COOKIES_FORMAT_UNKNOWN": 400,
-        "LOGIN_REQUIRED": 401,
-        "CHECKPOINT_REQUIRED": 401,
-        "PRIVATE_PROFILE": 403,
-        "PROFILE_NOT_FOUND": 404,
-        "RATE_LIMIT": 429,
-        "NETWORK_ERROR": 502,
-        "INSTALOADER_NOT_INSTALLED": 503,
-    }
-    status_code = status_map.get(exc.reason, 502)
-    message = exc.message or exc.reason
-    raise HTTPException(status_code=status_code, detail=f"{exc.reason}: {message}")
+    status_code = PROVIDER_ERROR_HTTP_STATUS.get(exc.reason)
+    if status_code is None:
+        status_code = PROVIDER_ERROR_HTTP_STATUS.get(_normalize_provider_error_code(exc), 502)
+    raise HTTPException(status_code=status_code, detail=_provider_error_payload(exc))
 
 
 def _set_session_cookie(response: Response, token: str) -> None:

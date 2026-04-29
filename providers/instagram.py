@@ -1,4 +1,9 @@
-"""InstagramProvider на базе Instaloader."""
+"""Instagram preview/download providers.
+
+Основной рабочий provider сейчас основан на Instaloader. Контракт preview
+специально держится стабильным для frontend Real API Mode: без fake media и
+без случайно сгенерированных metadata.
+"""
 
 from __future__ import annotations
 
@@ -16,8 +21,10 @@ from providers.base import BaseProvider, ProviderError
 from vault import load_secret
 
 
-class InstagramProvider(BaseProvider):
-    """Реальный Instagram provider; секреты читает только из encrypted vault."""
+class InstaloaderProvider(BaseProvider):
+    """Реальный Instagram provider на Instaloader; секреты читает только из encrypted vault."""
+
+    provider_name = "instaloader"
 
     def normalize_target(self, value: str) -> str:
         raw = value.strip().lower()
@@ -191,7 +198,11 @@ class InstagramProvider(BaseProvider):
         except ProviderError as exc:
             return False, exc.reason
         except Exception as exc:
-            return False, type(exc).__name__
+            try:
+                self._raise_mapped_error(exc)
+            except ProviderError as mapped:
+                return False, mapped.reason
+            return False, "UNKNOWN_ERROR"
 
     def _profile_preview_sync(self, account, username: str, limit: int) -> dict[str, Any]:
         try:
@@ -204,15 +215,15 @@ class InstagramProvider(BaseProvider):
                 posts.append(self._post_preview(post))
             return {
                 "username": profile.username,
-                "fullname": profile.full_name,
-                "biography": profile.biography,
-                "followers": profile.followers,
-                "following": profile.followees,
-                "posts_count": profile.mediacount,
-                "is_private": profile.is_private,
-                "is_verified": profile.is_verified,
-                "profile_pic_url": profile.profile_pic_url,
-                "external_url": profile.external_url,
+                "full_name": profile.full_name or None,
+                "bio": profile.biography or None,
+                "followers_count": self._optional_int(getattr(profile, "followers", None)),
+                "following_count": self._optional_int(getattr(profile, "followees", None)),
+                "posts_count": self._optional_int(getattr(profile, "mediacount", None)) or 0,
+                "is_private": bool(getattr(profile, "is_private", False)),
+                "is_verified": bool(getattr(profile, "is_verified", False)),
+                "profile_pic_url": getattr(profile, "profile_pic_url", None) or None,
+                "external_url": getattr(profile, "external_url", None) or None,
                 "posts": posts,
             }
         except ProviderError:
@@ -270,14 +281,22 @@ class InstagramProvider(BaseProvider):
             self._raise_mapped_error(exc)
 
     def _post_preview(self, post) -> dict[str, Any]:
+        shortcode = getattr(post, "shortcode", None)
+        date_utc = getattr(post, "date_utc", None) or getattr(post, "date", None)
+        if date_utc is not None and getattr(date_utc, "tzinfo", None) is None:
+            date_utc = date_utc.replace(tzinfo=timezone.utc)
+        media_id = getattr(post, "mediaid", None) or getattr(post, "id", None)
+        caption = getattr(post, "caption", None)
         return {
-            "shortcode": post.shortcode,
+            "shortcode": shortcode,
+            "id": str(media_id) if media_id is not None else shortcode,
             "type": self._post_type(post),
-            "date": post.date_utc.replace(tzinfo=timezone.utc).isoformat(),
-            "likes": post.likes,
-            "comments": post.comments,
-            "preview_url": post.url,
-            "caption": post.caption or "",
+            "date": date_utc.isoformat() if date_utc is not None else None,
+            "likes": self._optional_int(getattr(post, "likes", None)),
+            "comments": self._optional_int(getattr(post, "comments", None)),
+            "preview_url": getattr(post, "url", None),
+            "caption": caption if caption else None,
+            "is_video": bool(getattr(post, "is_video", False)),
         }
 
     def _post_metadata(self, post, username: str) -> dict[str, Any]:
@@ -285,25 +304,44 @@ class InstagramProvider(BaseProvider):
         payload.update(
             {
                 "username": username,
-                "typename": post.typename,
-                "is_video": post.is_video,
-                "video_url": getattr(post, "video_url", None) if post.is_video else None,
-                "url": post.url,
-                "caption": post.caption or "",
+                "typename": getattr(post, "typename", None),
+                "is_video": bool(getattr(post, "is_video", False)),
+                "video_url": getattr(post, "video_url", None) if bool(getattr(post, "is_video", False)) else None,
+                "url": getattr(post, "url", None),
+                "caption": getattr(post, "caption", None),
                 "location": getattr(getattr(post, "location", None), "name", None),
             }
         )
         return payload
 
     def _post_type(self, post) -> str:
-        if post.typename == "GraphSidecar":
+        typename = getattr(post, "typename", None)
+        if typename == "GraphSidecar":
             return "carousel"
-        if post.is_video:
+        if bool(getattr(post, "is_video", False)):
             return "video"
-        return "photo"
+        if typename == "GraphImage":
+            return "image"
+        return "unknown"
+
+    def _optional_int(self, value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     def _raise_mapped_error(self, exc: Exception):
         name = type(exc).__name__
+        text = str(exc)
+        lower_text = text.lower()
+        if "checkpoint" in lower_text or "challenge_required" in lower_text:
+            raise ProviderError("CHECKPOINT_REQUIRED", "Instagram требует подтверждения входа") from exc
+        if "login required" in lower_text or "not logged in" in lower_text:
+            raise ProviderError("LOGIN_REQUIRED", "Instagram-сессия недействительна") from exc
+        if "too many requests" in lower_text or "please wait" in lower_text or "429" in lower_text:
+            raise ProviderError("RATE_LIMIT", "Временный rate limit Instagram") from exc
+        if "timed out" in lower_text or "timeout" in lower_text:
+            raise ProviderError("TIMEOUT", "Instagram не ответил вовремя") from exc
         mapping = {
             "BadCredentialsException": "BAD_CREDENTIALS",
             "InvalidArgumentException": "BAD_CREDENTIALS",
@@ -315,9 +353,10 @@ class InstagramProvider(BaseProvider):
             "PrivateProfileNotFollowedException": "PRIVATE_PROFILE",
             "ProfileNotExistsException": "PROFILE_NOT_FOUND",
             "BadResponseException": "NETWORK_ERROR",
+            "QueryReturnedBadRequestException": "NETWORK_ERROR",
         }
-        reason = mapping.get(name, "UNKNOWN")
-        raise ProviderError(reason, str(exc)) from exc
+        reason = mapping.get(name, "UNKNOWN_ERROR")
+        raise ProviderError(reason, text) from exc
 
     def _cookies_from_secret(self, raw_secret: bytes) -> dict[str, str]:
         text = raw_secret.decode("utf-8", errors="ignore").strip()
@@ -444,3 +483,31 @@ class InstagramProvider(BaseProvider):
         if text and re.fullmatch(r"[A-Za-z0-9%:_\\-\\.]+", text):
             return {"sessionid": text}
         return None
+
+
+class InstagrapiPreviewProvider(InstaloaderProvider):
+    """Подготовленная точка расширения для будущего instagrapi preview provider.
+
+    Массовую загрузку media и скрытые повторные авторизации этот этап не
+    добавляет. Если provider выбран через env до реализации, API вернёт
+    понятную ошибку вместо тихого fallback на mock/другой источник.
+    """
+
+    provider_name = "instagrapi"
+
+    async def profile_preview(self, account, username: str, limit: int) -> dict[str, Any]:
+        try:
+            import instagrapi  # noqa: F401
+        except ImportError as exc:
+            raise ProviderError(
+                "PROVIDER_ERROR",
+                "Instagrapi preview provider подготовлен, но пакет instagrapi не установлен.",
+            ) from exc
+        raise ProviderError(
+            "PROVIDER_ERROR",
+            "Instagrapi preview provider подготовлен, но реализация будет добавлена на следующем этапе.",
+        )
+
+
+# Backward-compatible имя для существующих imports.
+InstagramProvider = InstaloaderProvider

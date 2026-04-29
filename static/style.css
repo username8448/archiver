@@ -726,6 +726,20 @@ input {
   box-shadow: 0 0 0 2px var(--black), 0 0 0 4px var(--orange);
 }
 
+.profile-avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  z-index: 1;
+}
+
+.profile-avatar-has-image #profile-initials {
+  opacity: 0;
+}
+
 /* Бейдж верификации */
 .verified-badge {
   position: absolute;
@@ -739,6 +753,7 @@ input {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--orange);
+  z-index: 2;
 }
 
 /* Имя и username */
@@ -1335,6 +1350,19 @@ input {
 }
 .stories-scroll::-webkit-scrollbar { display: none; }
 
+.story-empty-state {
+  min-height: 64px;
+  width: 100%;
+  border: 1px dashed var(--gray-800);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray-500);
+  font-size: 11px;
+  background: rgba(255,255,255,0.015);
+}
+
 /* Элемент Story */
 .story-item {
   display: flex;
@@ -1494,6 +1522,9 @@ input {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 6px;
 }
+.posts-grid.posts-grid-empty {
+  display: block;
+}
 
 /* Карточка поста в сетке */
 .post-card {
@@ -1510,6 +1541,46 @@ input {
 .post-card:hover .post-overlay { opacity: 1; }
 .post-card.selected { border-color: var(--orange); }
 .post-card.selected .post-checkbox-wrap { opacity: 1; }
+
+.post-media-shell {
+  position: absolute;
+  inset: 0;
+  background: var(--gray-950);
+}
+
+.post-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.post-image-fallback,
+.posts-empty-state {
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--gray-500);
+  font-size: 11px;
+  padding: 16px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0)),
+    var(--gray-900);
+}
+
+.post-image-fallback.is-hidden {
+  display: none;
+}
+
+.posts-empty-state {
+  border: 1px dashed var(--gray-800);
+  border-radius: var(--radius-sm);
+  min-height: 220px;
+}
 
 /* Изображение-заглушка поста (градиент) */
 .post-thumb {
@@ -1761,6 +1832,14 @@ input {
   top: 12px;
   left: 12px;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(0,0,0,0.68);
+  color: var(--white);
+  font-size: 10px;
 }
 
 .preview-media-content {
@@ -1769,6 +1848,32 @@ input {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.preview-real-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: var(--gray-950);
+}
+
+.preview-fallback {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gray-500);
+  font-size: 12px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0)),
+    var(--gray-900);
+}
+
+.preview-fallback.is-hidden {
+  display: none;
 }
 
 /* Заглушка изображения */
