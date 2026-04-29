@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260429-5" />
 </head>
 <body>
 
@@ -26,7 +26,7 @@
         <span class="logo-bracket">[</span>
         <span class="logo-name">ARCHIVER</span>
         <span class="logo-bracket">]</span>
-        <span class="logo-version">v0.9.1</span>
+        <span class="logo-version">v1.0.0</span>
       </div>
 
       <!-- Кнопки правой части шапки -->
@@ -843,7 +843,7 @@
       <!-- /accounts-list -->
 
       <!-- Кнопка добавления нового аккаунта -->
-      <button class="btn-add-account" id="btn-add-account">
+      <button class="btn-add-account" id="btn-add-account" type="button">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
@@ -854,29 +854,71 @@
       <div class="add-account-form" id="add-account-form" style="display:none">
         <div class="form-group">
           <label class="form-label">Username Instagram</label>
-          <input type="text" class="form-input" placeholder="@username" id="new-account-username" />
+          <input
+            type="text"
+            class="form-input"
+            placeholder="@username"
+            id="new-account-username"
+            autocomplete="off"
+          />
         </div>
         <div class="form-group">
-          <label class="form-label">Session файл (опционально)</label>
-          <div class="file-drop-zone" id="session-drop-zone">
-            <input type="file" id="session-file-input" class="sr-only" />
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-            </svg>
-            <span>Перетащите .session/cookies файл или <u>выберите</u></span>
+          <label class="form-label">Пароль Instagram</label>
+          <input
+            type="password"
+            class="form-input"
+            placeholder="Не сохраняется, только создаёт encrypted session"
+            id="new-account-password"
+            autocomplete="off"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label">2FA код</label>
+          <input
+            type="text"
+            class="form-input"
+            placeholder="Если Instagram попросит код"
+            id="new-account-2fa"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+          />
+        </div>
+        <button class="btn-secret-mode" id="btn-toggle-secret-mode" type="button">
+          Другой способ: session файл / sessionid
+        </button>
+        <div class="advanced-secret-block" id="advanced-secret-block" style="display:none">
+          <div class="form-group">
+            <label class="form-label">Session файл</label>
+            <div class="file-drop-zone" id="session-drop-zone">
+              <input type="file" id="session-file-input" class="sr-only" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <span>Перетащите .session/cookies файл или <u>выберите</u></span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Session ID строка</label>
+            <textarea
+              class="form-input form-textarea"
+              id="new-account-secret-value"
+              placeholder='sessionid:"80162251144%3A..."'
+              spellcheck="false"
+            ></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Тип секрета</label>
+            <select class="form-input" id="new-account-secret-kind">
+              <option value="session">Instaloader session</option>
+              <option value="sessionid">Session ID строка</option>
+              <option value="cookies">Cookies file</option>
+            </select>
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Тип секрета</label>
-          <select class="form-input" id="new-account-secret-kind">
-            <option value="session">Instaloader session</option>
-            <option value="cookies">Cookies file</option>
-          </select>
-        </div>
         <div class="form-actions">
-          <button class="btn-cancel-add" id="btn-cancel-add">Отмена</button>
-          <button class="btn-confirm-add" id="btn-confirm-add">Добавить</button>
+          <button class="btn-cancel-add" id="btn-cancel-add" type="button">Отмена</button>
+          <button class="btn-confirm-add" id="btn-confirm-add" type="button">Добавить</button>
         </div>
       </div>
 
@@ -1069,6 +1111,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260429-5"></script>
 </body>
 </html>

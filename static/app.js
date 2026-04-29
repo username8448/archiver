@@ -165,7 +165,7 @@ const state = {
   isDownloading: false,       // Идёт ли процесс скачивания
   downloadProgress: 0,        // Прогресс скачивания (0-100)
   downloadInterval: null,     // Таймер анимации прогресса
-  searchHistory: ['natgeo', 'nasa'], // История поисков
+  searchHistory: [],                 // История поисков
 };
 
 /* =======================================================
@@ -1353,6 +1353,10 @@ function initEventListeners() {
   document.getElementById('btn-cancel-add').addEventListener('click', () => {
     document.getElementById('add-account-form').style.display = 'none';
     document.getElementById('new-account-username').value = '';
+    document.getElementById('new-account-password').value = '';
+    document.getElementById('new-account-2fa').value = '';
+    document.getElementById('new-account-secret-value').value = '';
+    document.getElementById('advanced-secret-block').style.display = 'none';
   });
 
   // Реальное добавление аккаунта подключается ниже через API-слой.
@@ -1427,8 +1431,8 @@ function init() {
     document.getElementById('search-input').value = '';
   }
 
-  console.log('[Archiver] Приложение инициализировано. Версия v0.9.1');
-  console.log('[Archiver] Это макет без бэкенда. Все данные являются демонстрационными.');
+  console.log('[Archiver] Приложение инициализировано. Версия v1.0.0');
+  console.log('[Archiver] Runtime UI подключён к FastAPI backend.');
 }
 
 // Запускаем после загрузки DOM
@@ -1555,6 +1559,28 @@ function mapApiPost(post, index) {
 }
 
 function normalizeApiError(error) {
+  const message = error.message || 'Ошибка API';
+  if (message.includes('Добавьте и проверьте Instagram account')) {
+    openAccountsDrawer();
+    return 'Добавьте Instagram account в панели Аккаунты: username и пароль достаточно, sessionid не нужен.';
+  }
+  if (message.startsWith('LOGIN_REQUIRED') || message.startsWith('CHECKPOINT_REQUIRED')) {
+    openAccountsDrawer();
+    return 'Instagram session недействительна или требует подтверждения. Обновите account в панели Аккаунты.';
+  }
+  if (message.startsWith('TWO_FACTOR_REQUIRED')) {
+    document.getElementById('new-account-2fa')?.focus();
+    return 'Instagram запросил 2FA-код. Введите код и нажмите “Добавить” ещё раз.';
+  }
+  if (message.startsWith('BAD_CREDENTIALS') || message.startsWith('LOGIN_FAILED')) {
+    return 'Instagram не принял логин или пароль. Проверьте данные и возможный checkpoint.';
+  }
+  if (message.startsWith('RATE_LIMIT')) {
+    return 'Instagram временно ограничил запросы. Подождите несколько минут и попробуйте снова.';
+  }
+  if (message.startsWith('NETWORK_ERROR') || message.includes('403 Forbidden')) {
+    return 'Instagram временно отклоняет запрос. Попробуйте позже или перепроверьте sessionid.';
+  }
   if (error.status === 401) {
     openLoginOverlay();
     return 'Нужен вход администратора';
@@ -1563,7 +1589,60 @@ function normalizeApiError(error) {
     openLoginOverlay();
     return 'PostgreSQL ещё не готов. Docker должен поднять базу автоматически.';
   }
-  return error.message || 'Ошибка API';
+  return message;
+}
+
+let liveLoaderTimer = null;
+
+function showLiveLoader(username) {
+  const overlay = document.getElementById('profile-loader');
+  const primaryText = document.getElementById('loader-primary-text');
+  const secondaryText = document.getElementById('loader-secondary-text');
+  const steps = ['ls-1', 'ls-2', 'ls-3'];
+  const stepTexts = [
+    ['Разрешение username', 'Проверяем профиль через backend...'],
+    ['Загрузка метаданных', 'Ждём ответ Instagram...'],
+    ['Превью публикаций', 'Собираем последние публикации...'],
+  ];
+
+  clearTimeout(liveLoaderTimer);
+  overlay.classList.add('visible');
+  primaryText.textContent = `Загружаем @${username}...`;
+  secondaryText.textContent = 'Подключение к Instaloader';
+  steps.forEach(id => document.getElementById(id)?.classList.remove('active', 'done'));
+
+  let index = 0;
+  const tick = () => {
+    if (index < steps.length) {
+      if (index > 0) document.getElementById(steps[index - 1])?.classList.replace('active', 'done');
+      document.getElementById(steps[index])?.classList.add('active');
+      primaryText.textContent = stepTexts[index][0];
+      secondaryText.textContent = stepTexts[index][1];
+      index += 1;
+      liveLoaderTimer = setTimeout(tick, 900);
+      return;
+    }
+    document.getElementById(steps[steps.length - 1])?.classList.add('done');
+    primaryText.textContent = `Ждём Instagram для @${username}`;
+    secondaryText.textContent = 'Если Instagram отвечает медленно, результат может занять больше времени.';
+    liveLoaderTimer = setTimeout(tick, 3500);
+  };
+
+  tick();
+}
+
+function hideLiveLoader() {
+  clearTimeout(liveLoaderTimer);
+  liveLoaderTimer = null;
+  document.getElementById('profile-loader')?.classList.remove('visible');
+}
+
+function setSearchBusy(busy) {
+  const button = document.getElementById('btn-search');
+  const text = button?.querySelector('.btn-search-text');
+  if (!button || !text) return;
+  button.disabled = busy;
+  text.textContent = busy ? 'Загружаем...' : 'Загрузить профиль';
 }
 
 function openSetupOverlay() {
@@ -1621,16 +1700,16 @@ async function loadProfile(rawInput) {
   addToHistory(username);
 
   try {
-    const profilePromise = apiRequest('/api/profile/preview', {
+    setSearchBusy(true);
+    showLiveLoader(username);
+    const payload = await apiRequest('/api/profile/preview', {
       method: 'POST',
       body: {
         target: rawInput,
-        limit: state.postsCount || 30,
+        limit: Math.min(state.postsCount || 12, 12),
         force_refresh: false,
       },
     });
-    await showLoader(username);
-    const payload = await profilePromise;
     const profileData = mapApiProfile(payload);
     state.currentProfile = profileData;
     state.posts = (payload.profile.posts || []).map(mapApiPost);
@@ -1643,6 +1722,9 @@ async function loadProfile(rawInput) {
     showToast(`Профиль @${profileData.username} успешно загружен`, 'ok');
   } catch (error) {
     showToast(normalizeApiError(error), 'err');
+  } finally {
+    hideLiveLoader();
+    setSearchBusy(false);
   }
 }
 
@@ -1894,8 +1976,13 @@ function renderAccountsDrawer(accounts) {
     });
     card.querySelector('[data-action="delete"]').addEventListener('click', async () => {
       if (!confirm(`Удалить аккаунт @${account.username} из encrypted vault?`)) return;
-      await apiRequest(`/api/accounts/${account.id}`, { method: 'DELETE' });
-      await loadAccountsFromApi();
+      try {
+        await apiRequest(`/api/accounts/${account.id}`, { method: 'DELETE' });
+        await loadAccountsFromApi();
+        showToast(`Аккаунт @${account.username} удалён`, 'ok');
+      } catch (error) {
+        showToast(normalizeApiError(error), 'err');
+      }
     });
     list.appendChild(card);
   });
@@ -1906,32 +1993,90 @@ async function uploadAccountSecret(event) {
   event.stopImmediatePropagation();
   const submit = document.getElementById('btn-confirm-add');
   const username = document.getElementById('new-account-username').value.trim();
-  const secretKind = document.getElementById('new-account-secret-kind').value;
+  const password = document.getElementById('new-account-password').value;
+  const twoFactorCode = document.getElementById('new-account-2fa').value.trim();
+  const secretKindSelect = document.getElementById('new-account-secret-kind');
+  let secretKind = secretKindSelect.value;
+  const secretValue = document.getElementById('new-account-secret-value').value.trim();
   const inputFile = document.getElementById('session-file-input').files[0];
   const file = apiRuntime.secretFile || inputFile;
-  if (!username) {
-    showToast('Введите username аккаунта', 'warn');
+  const advancedSecretVisible = document.getElementById('advanced-secret-block')?.style.display !== 'none';
+  if (password) {
+    if (!username) {
+      showToast('Введите username Instagram для входа по паролю', 'warn');
+      document.getElementById('new-account-username').focus();
+      return;
+    }
+    try {
+      submit.disabled = true;
+      submit.textContent = 'Входим...';
+      const formData = new FormData();
+      formData.append('username', username);
+      formData.append('password', password);
+      if (twoFactorCode) {
+        formData.append('two_factor_code', twoFactorCode);
+      }
+      const account = await apiRequest('/api/accounts/login', { method: 'POST', body: formData });
+      apiRuntime.secretFile = null;
+      document.getElementById('add-account-form').style.display = 'none';
+      document.getElementById('new-account-username').value = '';
+      document.getElementById('new-account-password').value = '';
+      document.getElementById('new-account-2fa').value = '';
+      document.getElementById('new-account-secret-value').value = '';
+      document.getElementById('session-file-input').value = '';
+      resetDropZone();
+      await loadAccountsFromApi();
+      showToast(`Аккаунт @${account.username} подключён через Instaloader session`, 'ok');
+    } catch (error) {
+      showToast(normalizeApiError(error), 'err');
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Добавить';
+    }
     return;
   }
-  if (!file) {
-    showToast('Выберите session/cookies файл', 'warn');
+
+  if (!advancedSecretVisible) {
+    showToast('Введите username и пароль Instagram. Sessionid заполнять не нужно.', 'warn');
+    document.getElementById(username ? 'new-account-password' : 'new-account-username').focus();
     return;
+  }
+  if (!file && !secretValue) {
+    showToast('Выберите session файл или вставьте sessionid строку', 'warn');
+    return;
+  }
+  if (!username && !secretValue) {
+    showToast('Введите username или вставьте sessionid строку', 'warn');
+    return;
+  }
+  if (secretValue && secretKind === 'session') {
+    secretKind = 'sessionid';
+    secretKindSelect.value = 'sessionid';
   }
   try {
     submit.disabled = true;
     submit.textContent = 'Проверяем...';
     const formData = new FormData();
-    formData.append('username', username);
+    if (username) {
+      formData.append('username', username);
+    }
     formData.append('secret_kind', secretKind);
-    formData.append('secret_file', file);
-    await apiRequest('/api/accounts', { method: 'POST', body: formData });
+    if (secretValue) {
+      formData.append('secret_value', secretValue);
+    } else {
+      formData.append('secret_file', file);
+    }
+    const account = await apiRequest('/api/accounts', { method: 'POST', body: formData });
     apiRuntime.secretFile = null;
     document.getElementById('add-account-form').style.display = 'none';
     document.getElementById('new-account-username').value = '';
+    document.getElementById('new-account-password').value = '';
+    document.getElementById('new-account-2fa').value = '';
+    document.getElementById('new-account-secret-value').value = '';
     document.getElementById('session-file-input').value = '';
     resetDropZone();
     await loadAccountsFromApi();
-    showToast(`Аккаунт @${username} сохранён в encrypted vault`, 'ok');
+    showToast(`Аккаунт @${account.username} сохранён в encrypted vault`, 'ok');
   } catch (error) {
     showToast(normalizeApiError(error), 'err');
   } finally {
@@ -1952,6 +2097,16 @@ function resetDropZone() {
     <span>Перетащите .session/cookies файл или <u>выберите</u></span>
   `;
   bindDropZoneFileInput();
+  const password = document.getElementById('new-account-password');
+  const twoFactor = document.getElementById('new-account-2fa');
+  const secretValue = document.getElementById('new-account-secret-value');
+  const advancedBlock = document.getElementById('advanced-secret-block');
+  const advancedButton = document.getElementById('btn-toggle-secret-mode');
+  if (password) password.value = '';
+  if (twoFactor) twoFactor.value = '';
+  if (secretValue) secretValue.value = '';
+  if (advancedBlock) advancedBlock.style.display = 'none';
+  if (advancedButton) advancedButton.textContent = 'Другой способ: session файл / sessionid';
 }
 
 async function loadSettingsIntoForm() {
@@ -2063,6 +2218,28 @@ function bindDropZoneFileInput() {
       dropZone.querySelector('span').textContent = `${apiRuntime.secretFile.name} (${(apiRuntime.secretFile.size / 1024).toFixed(1)} KB)`;
       dropZone.style.color = 'var(--green)';
     }
+  });
+}
+
+function bindSessionIdInput() {
+  const input = document.getElementById('new-account-secret-value');
+  const kind = document.getElementById('new-account-secret-kind');
+  if (!input || !kind) return;
+  input.addEventListener('input', () => {
+    if (input.value.trim() && kind.value === 'session') {
+      kind.value = 'sessionid';
+    }
+  });
+}
+
+function bindSecretModeToggle() {
+  const button = document.getElementById('btn-toggle-secret-mode');
+  const block = document.getElementById('advanced-secret-block');
+  if (!button || !block) return;
+  button.addEventListener('click', () => {
+    const visible = block.style.display !== 'none';
+    block.style.display = visible ? 'none' : 'flex';
+    button.textContent = visible ? 'Другой способ: session файл / sessionid' : 'Скрыть session файл / sessionid';
   });
 }
 
@@ -2182,6 +2359,8 @@ function bindApiEventListeners() {
     }
   }, true);
   bindDropZoneFileInput();
+  bindSessionIdInput();
+  bindSecretModeToggle();
 
   document.getElementById('btn-download-zip').addEventListener('click', (event) => {
     if (!apiRuntime.currentJobId) return;

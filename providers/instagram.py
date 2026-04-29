@@ -7,8 +7,10 @@ import json
 import re
 import tempfile
 from datetime import timezone
+from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from providers.base import BaseProvider, ProviderError
 from vault import load_secret
@@ -31,6 +33,32 @@ class InstagramProvider(BaseProvider):
 
     async def validate_account(self, account) -> tuple[bool, str | None]:
         return await asyncio.to_thread(self._validate_account_sync, account)
+
+    async def infer_account_username(
+        self,
+        secret_kind: str,
+        raw_secret: bytes,
+        fallback_username: str | None = None,
+    ) -> str | None:
+        return await asyncio.to_thread(
+            self._infer_account_username_sync,
+            secret_kind,
+            raw_secret,
+            fallback_username,
+        )
+
+    async def login_with_password(
+        self,
+        username: str,
+        password: str,
+        two_factor_code: str | None = None,
+    ) -> tuple[str, bytes]:
+        return await asyncio.to_thread(
+            self._login_with_password_sync,
+            username,
+            password,
+            two_factor_code,
+        )
 
     async def profile_preview(self, account, username: str, limit: int) -> dict[str, Any]:
         return await asyncio.to_thread(self._profile_preview_sync, account, username, limit)
@@ -64,31 +92,96 @@ class InstagramProvider(BaseProvider):
         return instaloader
 
     def _loader_from_account(self, account):
+        raw_secret = load_secret(account.secret_id)
+        return self._loader_from_raw_secret(account.secret_kind, raw_secret, account.username)
+
+    def _new_loader(self, instaloader):
+        return (
+            instaloader.Instaloader(
+                sleep=True,
+                quiet=True,
+                download_pictures=True,
+                download_videos=True,
+                download_video_thumbnails=False,
+                save_metadata=False,
+                compress_json=False,
+                max_connection_attempts=1,
+                request_timeout=30.0,
+                iphone_support=False,
+            ),
+            instaloader,
+        )
+
+    def _loader_from_raw_secret(self, secret_kind: str, raw_secret: bytes, username: str):
         instaloader = self._import_instaloader()
-        if account.secret_kind != "session":
+        loader, instaloader = self._new_loader(instaloader)
+
+        if secret_kind == "sessionid":
+            secret_kind = "cookies"
+
+        if secret_kind == "cookies":
+            cookies = self._cookies_from_secret(raw_secret)
+            loader.load_session(username, cookies)
+            return loader, instaloader
+
+        if secret_kind != "session":
             raise ProviderError("SESSION_FILE_REQUIRED", "Для Instaloader нужен session-файл")
 
-        raw_secret = load_secret(account.secret_id)
-        loader = instaloader.Instaloader(
-            sleep=True,
-            download_pictures=True,
-            download_videos=True,
-            download_video_thumbnails=False,
-            save_metadata=False,
-            compress_json=False,
-        )
         with tempfile.NamedTemporaryFile(prefix="archiver-session-", delete=True) as tmp:
             tmp.write(raw_secret)
             tmp.flush()
-            loader.load_session_from_file(account.username, filename=tmp.name)
+            loader.load_session_from_file(username, filename=tmp.name)
         return loader, instaloader
 
+    def _infer_account_username_sync(
+        self,
+        secret_kind: str,
+        raw_secret: bytes,
+        fallback_username: str | None = None,
+    ) -> str | None:
+        try:
+            username = fallback_username or "instagram"
+            loader, _ = self._loader_from_raw_secret(secret_kind, raw_secret, username)
+            logged_in_as = loader.test_login()
+            if not logged_in_as:
+                return None
+            return self.normalize_target(logged_in_as)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            self._raise_mapped_error(exc)
+
+    def _login_with_password_sync(
+        self,
+        username: str,
+        password: str,
+        two_factor_code: str | None = None,
+    ) -> tuple[str, bytes]:
+        instaloader = self._import_instaloader()
+        username = self.normalize_target(username)
+        loader, _ = self._new_loader(instaloader)
+        try:
+            loader.login(username, password)
+        except instaloader.TwoFactorAuthRequiredException as exc:
+            if not two_factor_code:
+                raise ProviderError("TWO_FACTOR_REQUIRED", "Введите 2FA-код Instagram и повторите вход") from exc
+            try:
+                loader.two_factor_login(two_factor_code.strip())
+            except Exception as two_factor_exc:
+                self._raise_mapped_error(two_factor_exc)
+        except Exception as exc:
+            self._raise_mapped_error(exc)
+
+        cookies = loader.save_session()
+        self._complete_instagram_cookies(cookies)
+        if not cookies.get("sessionid"):
+            raise ProviderError(
+                "SESSION_COOKIE_MISSING",
+                "Instagram принял запрос, но не выдал sessionid. Подтвердите вход в Instagram, подождите несколько минут и повторите.",
+            )
+        return username, json.dumps(cookies, ensure_ascii=False).encode("utf-8")
+
     def _validate_account_sync(self, account) -> tuple[bool, str | None]:
-        if account.secret_kind == "cookies":
-            raw = load_secret(account.secret_id)
-            if b"sessionid" in raw or b"instagram.com" in raw:
-                return True, None
-            return False, "COOKIES_FORMAT_UNKNOWN"
         try:
             loader, _ = self._loader_from_account(account)
             logged_in_as = loader.test_login()
@@ -212,6 +305,10 @@ class InstagramProvider(BaseProvider):
     def _raise_mapped_error(self, exc: Exception):
         name = type(exc).__name__
         mapping = {
+            "BadCredentialsException": "BAD_CREDENTIALS",
+            "InvalidArgumentException": "BAD_CREDENTIALS",
+            "LoginException": "LOGIN_FAILED",
+            "TwoFactorAuthRequiredException": "TWO_FACTOR_REQUIRED",
             "TooManyRequestsException": "RATE_LIMIT",
             "ConnectionException": "NETWORK_ERROR",
             "LoginRequiredException": "LOGIN_REQUIRED",
@@ -221,3 +318,129 @@ class InstagramProvider(BaseProvider):
         }
         reason = mapping.get(name, "UNKNOWN")
         raise ProviderError(reason, str(exc)) from exc
+
+    def _cookies_from_secret(self, raw_secret: bytes) -> dict[str, str]:
+        text = raw_secret.decode("utf-8", errors="ignore").strip()
+        cookies = (
+            self._cookies_from_sessionid_label(text)
+            or self._cookies_from_json(text)
+            or self._cookies_from_netscape(text)
+            or self._cookies_from_pairs(text)
+        )
+        if not cookies:
+            raise ProviderError(
+                "COOKIES_FORMAT_UNKNOWN",
+                "Cookies-файл должен содержать sessionid. Лучше загрузить Instaloader session-файл.",
+            )
+        sessionid = cookies.get("sessionid")
+        if not sessionid:
+            raise ProviderError(
+                "COOKIES_FORMAT_UNKNOWN",
+                "Cookies-файл должен содержать sessionid. Лучше загрузить Instaloader session-файл.",
+            )
+        self._complete_instagram_cookies(cookies)
+        cookies.setdefault("csrftoken", "")
+        return cookies
+
+    def _complete_instagram_cookies(self, cookies: dict[str, str]) -> None:
+        sessionid = cookies.get("sessionid")
+        if not sessionid:
+            return
+
+        decoded_sessionid = unquote(sessionid)
+        user_id = decoded_sessionid.split(":", 1)[0]
+        if user_id.isdigit():
+            cookies.setdefault("ds_user_id", user_id)
+
+        if cookies.get("csrftoken") and cookies.get("mid"):
+            return
+
+        try:
+            import requests
+        except ImportError:
+            return
+
+        session = requests.Session()
+        for name, value in cookies.items():
+            if value:
+                session.cookies.set(name, value, domain=".instagram.com")
+        headers = {
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/121.0 Safari/537.36"
+            ),
+        }
+
+        try:
+            session.get("https://www.instagram.com/", headers=headers, timeout=20)
+        except Exception:
+            return
+
+        for name in ("csrftoken", "mid", "ig_did", "rur", "datr", "ds_user_id"):
+            value = session.cookies.get(name)
+            if value:
+                cookies[name] = value
+
+    def _cookies_from_sessionid_label(self, text: str) -> dict[str, str] | None:
+        match = re.search(r"sessionid\s*[:=]\s*[\"']?([^\"';\s]+)", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        return {"sessionid": match.group(1).strip()}
+
+    def _cookies_from_json(self, text: str) -> dict[str, str] | None:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+        cookies: dict[str, str] = {}
+        if isinstance(data, dict):
+            if isinstance(data.get("cookies"), list):
+                data = data["cookies"]
+            else:
+                for key, value in data.items():
+                    if isinstance(value, str):
+                        cookies[key] = value
+                return cookies or None
+
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name") or item.get("Name")
+                value = item.get("value") or item.get("Value")
+                if isinstance(name, str) and isinstance(value, str):
+                    cookies[name] = value
+        return cookies or None
+
+    def _cookies_from_netscape(self, text: str) -> dict[str, str] | None:
+        if "\t" not in text:
+            return None
+        with tempfile.NamedTemporaryFile("w+", prefix="archiver-cookies-", delete=True) as tmp:
+            tmp.write(text)
+            tmp.flush()
+            jar = MozillaCookieJar(tmp.name)
+            try:
+                jar.load(ignore_discard=True, ignore_expires=True)
+            except Exception:
+                return None
+        cookies = {cookie.name: cookie.value for cookie in jar}
+        return cookies or None
+
+    def _cookies_from_pairs(self, text: str) -> dict[str, str] | None:
+        cookies: dict[str, str] = {}
+        normalized = text.replace("\n", ";")
+        for part in normalized.split(";"):
+            if "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            name = name.strip()
+            value = value.strip()
+            if name and value:
+                cookies[name] = value
+        if cookies:
+            return cookies
+        if text and re.fullmatch(r"[A-Za-z0-9%:_\\-\\.]+", text):
+            return {"sessionid": text}
+        return None

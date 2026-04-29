@@ -34,6 +34,7 @@ from config import (
 from database import close_engine, get_session, init_engine
 from jobs import can_resume, find_active_job, resume_scheduler, schedule_job
 from models import Account, AdminSession, AdminUser, Job, JobItem, ProfileCache, utcnow
+from providers.base import ProviderError
 from schemas import (
     AccountResponse,
     HealthResponse,
@@ -264,44 +265,81 @@ async def list_accounts(user: AdminUser = Depends(current_admin), db=Depends(get
 
 @app.post("/api/accounts", response_model=AccountResponse)
 async def create_account(
-    username: str = Form(...),
+    username: str | None = Form(None),
     secret_kind: str = Form("session"),
-    secret_file: UploadFile = File(...),
+    secret_value: str | None = Form(None),
+    secret_file: UploadFile | None = File(None),
     user: AdminUser = Depends(current_admin),
     db=Depends(get_session),
 ):
     """Загружает session/cookies, шифрует и сохраняет только metadata в Postgres."""
+    has_secret_value = bool(secret_value and secret_value.strip())
+    if has_secret_value and secret_kind == "session":
+        secret_kind = "sessionid"
+    if secret_kind == "sessionid":
+        secret_kind = "cookies"
     if secret_kind not in {"session", "cookies"}:
-        raise HTTPException(status_code=400, detail="secret_kind must be session or cookies")
-    username = instagram_provider.normalize_target(username)
-    raw = await secret_file.read()
+        raise HTTPException(status_code=400, detail="secret_kind must be session, sessionid or cookies")
+
+    if has_secret_value:
+        raw = secret_value.strip().encode("utf-8")
+    elif secret_file is not None:
+        raw = await secret_file.read()
+    else:
+        raise HTTPException(status_code=400, detail="Secret file or sessionid string is required")
+
     if not raw:
-        raise HTTPException(status_code=400, detail="Secret file is empty")
+        raise HTTPException(status_code=400, detail="Secret value is empty")
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Secret file is too large")
 
-    secret_id = save_secret(raw)
-    existing = (await db.execute(select(Account).where(Account.username == username))).scalar_one_or_none()
-    if existing:
-        delete_secret(existing.secret_id)
-        account = existing
-        account.secret_id = secret_id
-        account.secret_kind = secret_kind
-        account.status = "NEW"
-        account.failure_reason = None
-    else:
-        has_accounts = (await db.execute(select(func.count(Account.id)))).scalar_one() > 0
-        account = Account(username=username, secret_id=secret_id, secret_kind=secret_kind, is_default=not has_accounts)
-        db.add(account)
-    await db.flush()
+    normalized_username: str | None = None
+    username_input = (username or "").strip()
+    if username_input:
+        try:
+            normalized_username = instagram_provider.normalize_target(username_input)
+        except ProviderError as exc:
+            _raise_provider_http(exc)
 
-    ok, reason = await instagram_provider.validate_account(account)
-    account.status = "OK" if ok else "INVALID_SESSION"
-    account.failure_reason = reason
-    account.last_validated_at = utcnow()
-    await db.commit()
-    await db.refresh(account)
-    return AccountResponse.model_validate(account, from_attributes=True)
+    inferred_username: str | None = None
+    try:
+        inferred_username = await instagram_provider.infer_account_username(secret_kind, raw, normalized_username)
+    except ProviderError as exc:
+        if normalized_username is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Не удалось автоматически определить username. Введите username вручную или проверьте sessionid.",
+            ) from exc
+        logger.info("Could not infer Instagram account username from secret: %s", exc.reason)
+
+    username = inferred_username or normalized_username
+    if username is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Не удалось автоматически определить username. Введите username вручную или проверьте sessionid.",
+        )
+
+    return await _store_account_secret(db, username, secret_kind, raw, assume_valid=bool(inferred_username))
+
+
+@app.post("/api/accounts/login", response_model=AccountResponse)
+async def login_instagram_account(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    two_factor_code: str | None = Form(None),
+    user: AdminUser = Depends(current_admin),
+    db=Depends(get_session),
+):
+    """Создаёт полноценную Instaloader session по логину/паролю без сохранения пароля."""
+    _check_auth_rate_limit(request, "instagram_login")
+    if not password:
+        raise HTTPException(status_code=400, detail="Instagram password is required")
+    try:
+        account_username, raw = await instagram_provider.login_with_password(username, password, two_factor_code)
+    except ProviderError as exc:
+        _raise_provider_http(exc)
+    return await _store_account_secret(db, account_username, "cookies", raw, assume_valid=True)
 
 
 @app.post("/api/accounts/{account_id}/default")
@@ -352,7 +390,10 @@ async def profile_preview(
 ):
     """Возвращает preview профиля из кэша или через Instaloader."""
     settings = await get_settings_map(db)
-    username = instagram_provider.normalize_target(payload.target)
+    try:
+        username = instagram_provider.normalize_target(payload.target)
+    except ProviderError as exc:
+        _raise_provider_http(exc)
     limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
     now = utcnow()
 
@@ -366,7 +407,11 @@ async def profile_preview(
         raise HTTPException(status_code=409, detail="Активная задача выполняется; превью доступно только из кэша")
 
     account = await _default_account(db)
-    preview = await instagram_provider.profile_preview(account, username, limit)
+    try:
+        preview = await instagram_provider.profile_preview(account, username, limit)
+    except ProviderError as exc:
+        await _mark_account_failed(db, account, exc)
+        _raise_provider_http(exc)
     ttl = int(settings.get("preview_cache_ttl_sec", DEFAULT_SETTINGS["preview_cache_ttl_sec"]))
     expires_at = now + timedelta(seconds=ttl)
 
@@ -392,7 +437,10 @@ async def create_job(
     if await find_active_job(db):
         raise HTTPException(status_code=409, detail="Допускается только одна активная задача")
 
-    username = instagram_provider.normalize_target(payload.target)
+    try:
+        username = instagram_provider.normalize_target(payload.target)
+    except ProviderError as exc:
+        _raise_provider_http(exc)
     settings = await get_settings_map(db)
     account = await _default_account(db)
     shortcodes = list(dict.fromkeys(payload.shortcodes))
@@ -401,7 +449,11 @@ async def create_job(
         limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
         cache = await db.get(ProfileCache, username)
         if cache is None:
-            preview = await instagram_provider.profile_preview(account, username, limit)
+            try:
+                preview = await instagram_provider.profile_preview(account, username, limit)
+            except ProviderError as exc:
+                await _mark_account_failed(db, account, exc)
+                _raise_provider_http(exc)
             cache = ProfileCache(
                 username=username,
                 payload=preview,
@@ -512,6 +564,50 @@ async def _default_account(db) -> Account:
     return account
 
 
+async def _store_account_secret(
+    db,
+    username: str,
+    secret_kind: str,
+    raw: bytes,
+    assume_valid: bool = False,
+) -> AccountResponse:
+    """Сохраняет encrypted Instagram secret и account metadata без раскрытия секрета."""
+    secret_id = save_secret(raw)
+    existing = (await db.execute(select(Account).where(Account.username == username))).scalar_one_or_none()
+    if existing:
+        delete_secret(existing.secret_id)
+        account = existing
+        account.secret_id = secret_id
+        account.secret_kind = secret_kind
+        account.status = "NEW"
+        account.failure_reason = None
+    else:
+        has_accounts = (await db.execute(select(func.count(Account.id)))).scalar_one() > 0
+        account = Account(username=username, secret_id=secret_id, secret_kind=secret_kind, is_default=not has_accounts)
+        db.add(account)
+    await db.flush()
+
+    if assume_valid:
+        ok, reason = True, None
+    else:
+        ok, reason = await instagram_provider.validate_account(account)
+    account.status = "OK" if ok else "INVALID_SESSION"
+    account.failure_reason = reason
+    account.last_validated_at = utcnow()
+    await db.commit()
+    await db.refresh(account)
+    return AccountResponse.model_validate(account, from_attributes=True)
+
+
+async def _mark_account_failed(db, account: Account, exc: ProviderError) -> None:
+    """Помечает текущий Instagram account невалидным при ошибке auth/secret."""
+    if exc.reason in {"LOGIN_REQUIRED", "CHECKPOINT_REQUIRED", "SESSION_FILE_REQUIRED", "COOKIES_FORMAT_UNKNOWN"}:
+        account.status = "INVALID_SESSION"
+        account.failure_reason = exc.reason
+        account.last_validated_at = utcnow()
+        await db.commit()
+
+
 async def initialize_database_with_retry(retries: int = 30, delay_sec: float = 2.0) -> None:
     """Ждёт PostgreSQL, применяет migrations/default settings/vault и запускает scheduler."""
     global _scheduler_task
@@ -586,6 +682,28 @@ def _check_auth_rate_limit(request: Request, action: str) -> None:
     if len(attempts) >= AUTH_RATE_LIMIT_MAX_ATTEMPTS:
         raise HTTPException(status_code=429, detail="Слишком много попыток. Подождите минуту и попробуйте снова.")
     attempts.append(now)
+
+
+def _raise_provider_http(exc: ProviderError) -> None:
+    """Преобразует ошибки Instagram provider в понятные HTTP-ответы."""
+    status_map = {
+        "VALIDATION_ERROR": 422,
+        "BAD_CREDENTIALS": 401,
+        "LOGIN_FAILED": 401,
+        "TWO_FACTOR_REQUIRED": 409,
+        "SESSION_FILE_REQUIRED": 400,
+        "COOKIES_FORMAT_UNKNOWN": 400,
+        "LOGIN_REQUIRED": 401,
+        "CHECKPOINT_REQUIRED": 401,
+        "PRIVATE_PROFILE": 403,
+        "PROFILE_NOT_FOUND": 404,
+        "RATE_LIMIT": 429,
+        "NETWORK_ERROR": 502,
+        "INSTALOADER_NOT_INSTALLED": 503,
+    }
+    status_code = status_map.get(exc.reason, 502)
+    message = exc.message or exc.reason
+    raise HTTPException(status_code=status_code, detail=f"{exc.reason}: {message}")
 
 
 def _set_session_cookie(response: Response, token: str) -> None:

@@ -2295,6 +2295,39 @@ input {
 }
 .form-input:focus { border-color: var(--orange); }
 .form-input::placeholder { color: var(--gray-600); }
+.form-textarea {
+  min-height: 74px;
+  height: auto;
+  resize: vertical;
+  padding: 9px 10px;
+  line-height: 1.4;
+  font-family: var(--font-mono);
+}
+
+.btn-secret-mode {
+  height: 34px;
+  border: 1px solid var(--gray-800);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--gray-400);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-secret-mode:hover {
+  color: var(--white);
+  border-color: var(--gray-700);
+  background: var(--gray-900);
+}
+.advanced-secret-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--gray-800);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.02);
+}
 
 /* Зона перетаскивания сессионного файла */
 .file-drop-zone {
