@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: instagram-archiver-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-archiver}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-archiver_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-archiver}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: instagram-archiver-app
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-archiver}:${POSTGRES_PASSWORD:-archiver_pass}@postgres:5432/${POSTGRES_DB:-archiver}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      HOME: /home/app
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - archiver_state:/home/app/.instagram_archiver
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  archiver_state:

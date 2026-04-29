@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Archiver — Local Media Tool</title>
+
+  <!-- Подключаем шрифты: IBM Plex Mono для технических данных, Syne для заголовков -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- =====================================================
+       СТРАНИЦА ПОИСКА (search-page)
+       Отображается по умолчанию при первом входе
+  ====================================================== -->
+  <div id="search-page" class="page active">
+
+    <!-- Верхняя панель навигации -->
+    <header class="top-bar">
+      <div class="logo">
+        <span class="logo-bracket">[</span>
+        <span class="logo-name">ARCHIVER</span>
+        <span class="logo-bracket">]</span>
+        <span class="logo-version">v0.9.1</span>
+      </div>
+
+      <!-- Кнопки правой части шапки -->
+      <div class="top-bar-actions">
+        <!-- Кнопка управления аккаунтами: открывает drawer -->
+        <button class="btn-accounts" id="btn-open-accounts" title="Управление аккаунтами">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span>Аккаунты</span>
+          <!-- Индикатор подключённых аккаунтов -->
+          <span class="accounts-badge">0</span>
+        </button>
+
+        <!-- Кнопка настроек -->
+        <button class="btn-icon" id="btn-open-settings" title="Настройки">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Центральный контент поисковой страницы -->
+    <main class="search-main">
+
+      <!-- Декоративный фоновый текст (чисто визуальный элемент) -->
+      <div class="bg-decoration" aria-hidden="true">ARCHIVE</div>
+
+      <div class="search-content">
+
+        <!-- Заголовок и описание инструмента -->
+        <div class="search-hero">
+          <h1 class="search-title">
+            Локальный архиватор
+            <span class="title-accent">медиаконтента</span>
+          </h1>
+          <p class="search-subtitle">
+            Введите ссылку на профиль или username — инструмент загрузит превью
+            и предложит выбрать режим архивирования
+          </p>
+        </div>
+
+        <!-- Форма поиска: поле ввода + кнопка -->
+        <div class="search-form">
+
+          <!-- Селектор платформы (будет расширяться) -->
+          <div class="platform-selector">
+            <button class="platform-btn active" data-platform="instagram" title="Instagram">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/>
+              </svg>
+              Instagram
+            </button>
+            <!-- Будущие платформы: YouTube, TikTok и т.д. — скрыты, но в разметке есть -->
+            <button class="platform-btn platform-coming" data-platform="youtube" title="Скоро: YouTube" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z"/>
+                <polygon points="9.545 15.568 15.818 12 9.545 8.432 9.545 15.568" fill="#000"/>
+              </svg>
+              YouTube
+              <span class="coming-label">soon</span>
+            </button>
+            <button class="platform-btn platform-coming" data-platform="tiktok" title="Скоро: TikTok" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.75a8.16 8.16 0 0 0 4.78 1.52V6.82a4.85 4.85 0 0 1-1.01-.13z"/>
+              </svg>
+              TikTok
+              <span class="coming-label">soon</span>
+            </button>
+          </div>
+
+          <!-- Поле ввода ссылки или username -->
+          <div class="input-wrapper">
+            <span class="input-prefix">@</span>
+            <input
+              type="text"
+              id="search-input"
+              class="search-input"
+              placeholder="username или https://instagram.com/username"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <!-- Кнопка очистки поля -->
+            <button class="input-clear" id="btn-clear-input" style="display:none" title="Очистить">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Кнопка запуска загрузки профиля -->
+          <button class="btn-search" id="btn-search">
+            <span class="btn-search-text">Загрузить профиль</span>
+            <svg class="btn-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="5" y1="12" x2="19" y2="12"/>
+              <polyline points="12 5 19 12 12 19"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Подсказки примеров для быстрого заполнения -->
+        <div class="search-hints">
+          <span class="hints-label">Примеры:</span>
+          <button class="hint-chip" data-val="natgeo">@natgeo</button>
+          <button class="hint-chip" data-val="nasa">@nasa</button>
+          <button class="hint-chip" data-val="https://instagram.com/bbcearth">instagram.com/bbcearth</button>
+        </div>
+
+        <!-- История последних поисков -->
+        <div class="recent-searches" id="recent-searches">
+          <div class="recent-header">
+            <span>Недавние</span>
+            <button class="recent-clear-btn" id="btn-clear-history">Очистить</button>
+          </div>
+          <div class="recent-list" id="recent-list">
+            <button class="recent-item" data-val="natgeo">
+              <span class="recent-icon">⏱</span>
+              <span>natgeo</span>
+              <span class="recent-time">5 мин назад</span>
+            </button>
+            <button class="recent-item" data-val="nasa">
+              <span class="recent-icon">⏱</span>
+              <span>nasa</span>
+              <span class="recent-time">2 дня назад</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Статусная строка внизу страницы поиска -->
+      <footer class="search-footer">
+        <div class="footer-status">
+          <span class="status-dot status-ok"></span>
+          <span>Instaloader готов</span>
+        </div>
+        <div class="footer-info">
+          PostgreSQL · <span id="db-size">vault</span> · Локальная сессия: <span class="session-badge">активна</span>
+        </div>
+      </footer>
+
+    </main>
+  </div>
+  <!-- /search-page -->
+
+
+  <!-- =====================================================
+       СТРАНИЦА ПРОФИЛЯ (profile-page)
+       Отображается после успешной загрузки профиля
+  ====================================================== -->
+  <div id="profile-page" class="page">
+
+    <!-- Верхняя навигационная панель профиля -->
+    <header class="profile-topbar">
+      <div class="profile-topbar-left">
+        <!-- Кнопка возврата на поиск -->
+        <button class="btn-back" id="btn-back">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          Назад
+        </button>
+        <!-- Хлебные крошки: платформа / аккаунт -->
+        <div class="breadcrumb">
+          <span class="breadcrumb-platform">instagram</span>
+          <span class="breadcrumb-sep">/</span>
+          <span class="breadcrumb-username" id="bc-username">natgeo</span>
+        </div>
+      </div>
+
+      <div class="profile-topbar-right">
+        <!-- Индикатор загруженных данных -->
+        <div class="data-freshness">
+          <span class="freshness-dot"></span>
+          <span class="freshness-text">Загружено только что</span>
+        </div>
+        <!-- Кнопка обновления данных профиля -->
+        <button class="btn-refresh" id="btn-refresh-profile" title="Обновить данные профиля">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="1 4 1 10 7 10"/>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          Обновить
+        </button>
+        <!-- Кнопка управления аккаунтами -->
+        <button class="btn-accounts btn-accounts-sm" id="btn-open-accounts-2" title="Аккаунты">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span class="accounts-badge">0</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Основной layout: левая панель + правая область контента -->
+    <div class="profile-layout">
+
+      <!-- ================================================
+           ЛЕВАЯ ПАНЕЛЬ: профиль + опции скачивания
+      ================================================= -->
+      <aside class="profile-sidebar">
+
+        <!-- --- Карточка профиля --- -->
+        <div class="profile-card">
+
+          <!-- Аватар профиля -->
+          <div class="profile-avatar-wrap">
+            <div class="profile-avatar" id="profile-avatar">
+              <!-- Иницалы как заглушка (в реальности — <img>) -->
+              <span id="profile-initials">NG</span>
+              <!-- Верификация -->
+              <div class="verified-badge" title="Верифицированный аккаунт">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="#F97316">
+                  <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Имя и username -->
+          <div class="profile-identity">
+            <h2 class="profile-fullname" id="profile-fullname">National Geographic</h2>
+            <span class="profile-username" id="profile-username">@natgeo</span>
+            <!-- Тип аккаунта -->
+            <span class="profile-type-badge">Публичный</span>
+          </div>
+
+          <!-- Счётчики профиля -->
+          <div class="profile-stats">
+            <div class="stat-item">
+              <span class="stat-value" id="stat-posts">1 848</span>
+              <span class="stat-label">публикаций</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-value" id="stat-followers">19.4M</span>
+              <span class="stat-label">подписчиков</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-value" id="stat-following">143</span>
+              <span class="stat-label">подписок</span>
+            </div>
+          </div>
+
+          <!-- Биография профиля -->
+          <div class="profile-bio" id="profile-bio">
+            <p>🌍 Inspiring people to care about the planet since 1888.</p>
+            <p>📷 Photos & stories from our photographers & explorers.</p>
+            <a href="#" class="bio-link" onclick="return false">natgeo.com/wildwatch</a>
+          </div>
+
+          <!-- Мета-информация: дата регистрации, категория -->
+          <div class="profile-meta">
+            <div class="meta-row">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>С 2010 года в Instagram</span>
+            </div>
+            <div class="meta-row">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              <span>Издание / СМИ</span>
+            </div>
+          </div>
+
+        </div>
+        <!-- /profile-card -->
+
+
+        <!-- --- Раздел: Опции архивирования --- -->
+        <div class="options-section">
+
+          <div class="section-header">
+            <h3 class="section-title">Режим скачивания</h3>
+          </div>
+
+          <!-- Радио-группа: режим архивирования -->
+          <div class="download-modes">
+
+            <label class="mode-option">
+              <input type="radio" name="dl-mode" value="meta-only" />
+              <div class="mode-card">
+                <div class="mode-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </div>
+                <div class="mode-info">
+                  <span class="mode-name">Только метаданные</span>
+                  <span class="mode-desc">Профиль без медиафайлов</span>
+                </div>
+              </div>
+            </label>
+
+            <label class="mode-option">
+              <input type="radio" name="dl-mode" value="last-n" checked />
+              <div class="mode-card active">
+                <div class="mode-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+                </div>
+                <div class="mode-info">
+                  <span class="mode-name">Последние N постов</span>
+                  <span class="mode-desc">Выбрать количество постов</span>
+                </div>
+              </div>
+            </label>
+
+            <label class="mode-option">
+              <input type="radio" name="dl-mode" value="selected" />
+              <div class="mode-card">
+                <div class="mode-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                </div>
+                <div class="mode-info">
+                  <span class="mode-name">Выбранные вручную</span>
+                  <span class="mode-desc">Чекбоксы в сетке постов</span>
+                </div>
+              </div>
+            </label>
+
+            <label class="mode-option">
+              <input type="radio" name="dl-mode" value="all-media" />
+              <div class="mode-card">
+                <div class="mode-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </div>
+                <div class="mode-info">
+                  <span class="mode-name">Медиа + метаданные</span>
+                  <span class="mode-desc">Полная архивация</span>
+                </div>
+              </div>
+            </label>
+
+          </div>
+
+          <!-- Параметр N для режима "Последние N постов" -->
+          <div class="mode-param" id="param-last-n">
+            <label class="param-label">Количество постов</label>
+            <div class="param-input-row">
+              <input type="range" min="1" max="100" value="30" id="range-posts-count" class="range-slider" />
+              <span class="range-val" id="range-val">30</span>
+            </div>
+          </div>
+
+
+          <!-- --- Глобальные опции --- -->
+          <div class="section-header" style="margin-top: 16px;">
+            <h3 class="section-title">Опции</h3>
+          </div>
+
+          <div class="global-options">
+
+            <label class="option-toggle">
+              <div class="toggle-info">
+                <span class="toggle-name">Скачивать медиафайлы</span>
+                <span class="toggle-desc">Фото и видео в оригинальном качестве</span>
+              </div>
+              <div class="toggle-switch" data-state="on" id="toggle-media">
+                <div class="toggle-thumb"></div>
+              </div>
+            </label>
+
+            <label class="option-toggle">
+              <div class="toggle-info">
+                <span class="toggle-name">Включить комментарии</span>
+                <span class="toggle-desc">Загружать и сохранять комментарии</span>
+              </div>
+              <div class="toggle-switch" data-state="off" id="toggle-comments">
+                <div class="toggle-thumb"></div>
+              </div>
+            </label>
+
+            <label class="option-toggle">
+              <div class="toggle-info">
+                <span class="toggle-name">Сохранять Stories</span>
+                <span class="toggle-desc">Требует активной сессии</span>
+              </div>
+              <div class="toggle-switch" data-state="off" id="toggle-stories">
+                <div class="toggle-thumb"></div>
+              </div>
+            </label>
+
+            <label class="option-toggle">
+              <div class="toggle-info">
+                <span class="toggle-name">ZIP-архив результата</span>
+                <span class="toggle-desc">Упаковать всё в один .zip файл</span>
+              </div>
+              <div class="toggle-switch" data-state="on" id="toggle-zip">
+                <div class="toggle-thumb"></div>
+              </div>
+            </label>
+
+          </div>
+
+
+          <!-- --- Кнопка запуска скачивания --- -->
+          <div class="download-action">
+            <!-- Информация об ожидаемом результате -->
+            <div class="download-estimate">
+              <div class="estimate-row">
+                <span>Выбрано постов</span>
+                <span class="estimate-val" id="est-posts">30</span>
+              </div>
+              <div class="estimate-row">
+                <span>Медиафайлов ~</span>
+                <span class="estimate-val" id="est-files">~60</span>
+              </div>
+              <div class="estimate-row">
+                <span>Размер ~</span>
+                <span class="estimate-val" id="est-size">~180 MB</span>
+              </div>
+            </div>
+
+            <button class="btn-start-download" id="btn-start-download">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Начать архивирование
+            </button>
+
+            <!-- Кнопка скачивания ZIP (появится после завершения) -->
+            <button class="btn-download-zip" id="btn-download-zip" style="display:none">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Скачать ZIP
+              <span class="zip-size">178.4 MB</span>
+            </button>
+          </div>
+
+
+          <!-- --- Прогресс скачивания --- -->
+          <div class="progress-block" id="progress-block" style="display:none">
+
+            <div class="progress-header">
+              <span class="progress-label" id="progress-label">Загрузка метаданных...</span>
+              <span class="progress-pct" id="progress-pct">0%</span>
+            </div>
+
+            <div class="progress-bar-wrap">
+              <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+            </div>
+
+            <div class="progress-details">
+              <span id="progress-current">0</span> / <span id="progress-total">30</span> постов
+            </div>
+
+            <div class="progress-controls">
+              <button class="btn-pause" id="btn-pause">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                </svg>
+                Пауза
+              </button>
+              <button class="btn-stop" id="btn-stop">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="3" y="3" width="18" height="18"/>
+                </svg>
+                Стоп
+              </button>
+            </div>
+
+            <!-- Rate limit предупреждение -->
+            <div class="rate-limit-warn" id="rate-limit-warn" style="display:none">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+              <span>Rate limit — задача поставлена на паузу. Прогресс сохранён.</span>
+            </div>
+
+          </div>
+          <!-- /progress-block -->
+
+          <!-- История задач этого профиля -->
+          <div class="jobs-history" id="jobs-history">
+            <div class="section-header">
+              <h3 class="section-title">История задач</h3>
+            </div>
+            <div class="jobs-list">
+              <div class="job-item">
+                <div class="job-status-dot job-paused-dot"></div>
+                <div class="job-info">
+                  <span class="job-name">Задач пока нет</span>
+                  <span class="job-date">Создайте архив после загрузки профиля</span>
+                </div>
+                <span class="job-size">—</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <!-- /options-section -->
+
+      </aside>
+      <!-- /profile-sidebar -->
+
+
+      <!-- ================================================
+           ПРАВАЯ ОБЛАСТЬ: Stories + сетка постов
+      ================================================= -->
+      <main class="profile-content">
+
+        <!-- Горизонтальная полоса Stories -->
+        <div class="stories-strip" id="stories-strip">
+          <div class="stories-header">
+            <span class="stories-title">Stories Highlights</span>
+            <span class="stories-count" id="stories-count">14 highlights</span>
+          </div>
+          <div class="stories-scroll" id="stories-scroll">
+            <!-- Stories генерируются JavaScript'ом -->
+          </div>
+        </div>
+
+        <!-- Панель управления постами: вкладки + выбор + поиск -->
+        <div class="posts-toolbar">
+
+          <!-- Вкладки: Публикации / Reels / Отмеченные -->
+          <div class="posts-tabs">
+            <button class="posts-tab active" data-tab="posts">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              </svg>
+              Публикации
+            </button>
+            <button class="posts-tab" data-tab="reels">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+              </svg>
+              Reels
+            </button>
+            <button class="posts-tab" data-tab="tagged">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+              Отмеченные
+            </button>
+          </div>
+
+          <!-- Кнопки управления выбором -->
+          <div class="selection-controls">
+            <button class="btn-select-all" id="btn-select-all">Выбрать все</button>
+            <button class="btn-deselect-all" id="btn-deselect-all">Снять выбор</button>
+            <!-- Счётчик выделенных постов -->
+            <span class="selected-counter" id="selected-counter">
+              <span id="selected-count">0</span> выбрано
+            </span>
+          </div>
+
+          <!-- Фильтр по типу контента -->
+          <div class="content-filters">
+            <button class="filter-chip active" data-filter="all">Все</button>
+            <button class="filter-chip" data-filter="photo">Фото</button>
+            <button class="filter-chip" data-filter="video">Видео</button>
+            <button class="filter-chip" data-filter="carousel">Карусель</button>
+          </div>
+
+        </div>
+        <!-- /posts-toolbar -->
+
+        <!-- Сетка публикаций с независимой прокруткой -->
+        <div class="posts-grid-wrap">
+          <div class="posts-grid" id="posts-grid">
+            <!-- Посты генерируются JavaScript'ом -->
+          </div>
+
+          <!-- Лоадер при подгрузке следующей страницы -->
+          <div class="grid-loader" id="grid-loader" style="display:none">
+            <div class="grid-loader-spinner"></div>
+            <span>Загрузка следующей партии...</span>
+          </div>
+
+          <!-- Конец списка -->
+          <div class="grid-end" id="grid-end" style="display:none">
+            <div class="grid-end-line"></div>
+            <span>Загружено <strong id="total-loaded">48</strong> из <strong>1848</strong> публикаций</span>
+            <button class="btn-load-more" id="btn-load-more">Загрузить ещё 48</button>
+          </div>
+        </div>
+        <!-- /posts-grid-wrap -->
+
+      </main>
+      <!-- /profile-content -->
+
+    </div>
+    <!-- /profile-layout -->
+
+  </div>
+  <!-- /profile-page -->
+
+
+  <!-- =====================================================
+       МОДАЛ: Предпросмотр поста (post-preview)
+       Открывается при клике на пост в сетке
+  ====================================================== -->
+  <div class="modal-overlay" id="post-preview-overlay">
+    <div class="post-preview-modal" id="post-preview-modal">
+
+      <!-- Кнопка закрытия модала -->
+      <button class="modal-close" id="modal-close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+
+      <!-- Навигация между постами внутри модала -->
+      <button class="modal-nav modal-prev" id="modal-prev">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <button class="modal-nav modal-next" id="modal-next">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+      </button>
+
+      <!-- Медиа-область -->
+      <div class="preview-media-area" id="preview-media-area">
+        <!-- Иконка типа медиа -->
+        <div class="preview-media-type" id="preview-media-type"></div>
+        <!-- Основное изображение/видео -->
+        <div class="preview-media-content" id="preview-media-content">
+          <!-- Заглушка изображения -->
+          <div class="preview-img-placeholder" id="preview-img-placeholder">
+            <div class="placeholder-pattern"></div>
+            <div class="placeholder-shimmer"></div>
+          </div>
+        </div>
+        <!-- Навигация по каруселям -->
+        <div class="carousel-dots" id="carousel-dots"></div>
+      </div>
+
+      <!-- Метаданные поста -->
+      <div class="preview-meta-area">
+
+        <!-- Шапка поста: автор и дата -->
+        <div class="preview-post-header">
+          <div class="preview-author-avatar" id="preview-author-avatar">NG</div>
+          <div class="preview-author-info">
+            <span class="preview-author-name" id="preview-author-name">natgeo</span>
+            <span class="preview-post-date" id="preview-post-date">14 апр 2024</span>
+          </div>
+          <!-- Кнопка выделения поста из модала -->
+          <div class="preview-select-wrap">
+            <label class="preview-checkbox-label">
+              <input type="checkbox" class="preview-post-checkbox" id="preview-post-checkbox" />
+              <span class="preview-checkbox-text">В архив</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Статистика поста -->
+        <div class="preview-post-stats">
+          <div class="post-stat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+            </svg>
+            <span id="preview-likes">247K</span>
+          </div>
+          <div class="post-stat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span id="preview-comments-count">1.2K</span>
+          </div>
+          <div class="post-stat post-stat-type">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+            <span id="preview-type-label">Фото</span>
+          </div>
+          <div class="post-stat">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="20" height="20" rx="2" ry="2"/>
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            <span id="preview-post-id">shortcode: AbCdEfG</span>
+          </div>
+        </div>
+
+        <!-- Описание поста -->
+        <div class="preview-caption-wrap">
+          <div class="preview-caption" id="preview-caption">
+            Загрузка описания поста...
+          </div>
+          <button class="caption-toggle" id="caption-toggle">Читать полностью</button>
+        </div>
+
+        <!-- Хэштеги -->
+        <div class="preview-hashtags" id="preview-hashtags"></div>
+
+        <!-- Геолокация если есть -->
+        <div class="preview-location" id="preview-location" style="display:none">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+          <span id="preview-location-text"></span>
+        </div>
+
+        <!-- Метаданные файла -->
+        <div class="preview-file-meta">
+          <div class="file-meta-row">
+            <span class="file-meta-key">Shortcode</span>
+            <span class="file-meta-val" id="pm-shortcode">—</span>
+          </div>
+          <div class="file-meta-row">
+            <span class="file-meta-key">Разрешение</span>
+            <span class="file-meta-val" id="pm-resolution">—</span>
+          </div>
+          <div class="file-meta-row">
+            <span class="file-meta-key">Формат</span>
+            <span class="file-meta-val" id="pm-format">—</span>
+          </div>
+          <div class="file-meta-row">
+            <span class="file-meta-key">Размер</span>
+            <span class="file-meta-val" id="pm-size">—</span>
+          </div>
+          <div class="file-meta-row">
+            <span class="file-meta-key">Timestamp</span>
+            <span class="file-meta-val" id="pm-timestamp">—</span>
+          </div>
+        </div>
+
+        <!-- Кнопки действий в модале -->
+        <div class="preview-actions">
+          <button class="btn-preview-action btn-preview-download" id="btn-preview-download">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Скачать этот пост
+          </button>
+          <button class="btn-preview-action btn-preview-meta" id="btn-preview-meta">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Только JSON
+          </button>
+        </div>
+
+      </div>
+      <!-- /preview-meta-area -->
+
+    </div>
+  </div>
+  <!-- /post-preview-overlay -->
+
+
+  <!-- =====================================================
+       DRAWER: Управление аккаунтами (accounts-drawer)
+       Открывается по кнопке "Аккаунты"
+  ====================================================== -->
+  <div class="drawer-overlay" id="accounts-drawer-overlay">
+    <div class="accounts-drawer" id="accounts-drawer">
+
+      <!-- Заголовок drawer -->
+      <div class="drawer-header">
+        <h2 class="drawer-title">Интегрированные аккаунты</h2>
+        <button class="drawer-close" id="drawer-close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Описание -->
+      <p class="drawer-desc">
+        Привязанные Instagram-аккаунты для авторизованного скачивания.
+        Session file используется для доступа к приватному контенту.
+        Создать session можно командой: <code>instaloader --login=YOUR_USERNAME</code>.
+      </p>
+
+      <!-- Список аккаунтов -->
+      <div class="accounts-list" id="accounts-list">
+        <div class="account-card account-loading">
+          <div class="account-avatar">IG</div>
+          <div class="account-info">
+            <div class="account-name-row">
+              <span class="account-username">Загрузка аккаунтов...</span>
+              <span class="account-status-badge account-warning">vault</span>
+            </div>
+            <div class="account-details">
+              <div class="account-detail-row">
+                <span class="detail-key">Vault</span>
+                <span class="detail-val">Секреты не отображаются в интерфейсе</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <!-- /accounts-list -->
+
+      <!-- Кнопка добавления нового аккаунта -->
+      <button class="btn-add-account" id="btn-add-account">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Добавить аккаунт Instagram
+      </button>
+
+      <!-- Блок добавления нового аккаунта (скрыт по умолчанию) -->
+      <div class="add-account-form" id="add-account-form" style="display:none">
+        <div class="form-group">
+          <label class="form-label">Username Instagram</label>
+          <input type="text" class="form-input" placeholder="@username" id="new-account-username" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Session файл (опционально)</label>
+          <div class="file-drop-zone" id="session-drop-zone">
+            <input type="file" id="session-file-input" class="sr-only" />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span>Перетащите .session/cookies файл или <u>выберите</u></span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Тип секрета</label>
+          <select class="form-input" id="new-account-secret-kind">
+            <option value="session">Instaloader session</option>
+            <option value="cookies">Cookies file</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button class="btn-cancel-add" id="btn-cancel-add">Отмена</button>
+          <button class="btn-confirm-add" id="btn-confirm-add">Добавить</button>
+        </div>
+      </div>
+
+      <!-- Разделитель -->
+      <div class="drawer-divider"></div>
+
+      <!-- Информация о безопасности -->
+      <div class="drawer-security-note">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <p>
+          Archiver не обходит ограничения Instagram. Session файлы хранятся
+          локально и используются только для авторизованных запросов через Instaloader.
+        </p>
+      </div>
+
+      <!-- Блок поддерживаемых платформ (расширяемость) -->
+      <div class="drawer-platforms">
+        <div class="platforms-label">Поддерживаемые платформы</div>
+        <div class="platforms-list">
+          <div class="platform-item platform-available">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 1 0 0 12.324 6.162 6.162 0 0 0 0-12.324zM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm6.406-11.845a1.44 1.44 0 1 0 0 2.881 1.44 1.44 0 0 0 0-2.881z"/></svg>
+            Instagram
+            <span class="platform-avail-badge">доступно</span>
+          </div>
+          <div class="platform-item platform-future">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814z"/><polygon points="9.545 15.568 15.818 12 9.545 8.432 9.545 15.568" fill="#000"/></svg>
+            YouTube
+            <span class="platform-future-badge">скоро</span>
+          </div>
+          <div class="platform-item platform-future">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.75a8.16 8.16 0 0 0 4.78 1.52V6.82a4.85 4.85 0 0 1-1.01-.13z"/></svg>
+            TikTok
+            <span class="platform-future-badge">скоро</span>
+          </div>
+          <div class="platform-item platform-future">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            Facebook
+            <span class="platform-future-badge">скоро</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+  <!-- /accounts-drawer -->
+
+
+  <!-- =====================================================
+       ТОСТ-УВЕДОМЛЕНИЯ (toast-container)
+       Для отображения временных сообщений
+  ====================================================== -->
+  <div class="toast-container" id="toast-container"></div>
+
+
+  <!-- =====================================================
+       ЛОАДЕР ЗАГРУЗКИ ПРОФИЛЯ
+       Анимация при загрузке превью профиля
+  ====================================================== -->
+  <div class="profile-loader-overlay" id="profile-loader">
+    <div class="loader-content">
+      <div class="loader-spinner">
+        <svg width="40" height="40" viewBox="0 0 50 50">
+          <circle cx="25" cy="25" r="20" fill="none" stroke="#F97316" stroke-width="3"
+                  stroke-dasharray="100 60" stroke-linecap="round">
+            <animateTransform attributeName="transform" type="rotate"
+                              from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/>
+          </circle>
+        </svg>
+      </div>
+      <div class="loader-text">
+        <span class="loader-primary" id="loader-primary-text">Загружаем профиль...</span>
+        <span class="loader-secondary" id="loader-secondary-text">Подключение к Instagram API</span>
+      </div>
+      <div class="loader-steps">
+        <div class="loader-step active" id="ls-1">
+          <div class="ls-dot"></div>
+          <span>Разрешение username</span>
+        </div>
+        <div class="loader-step" id="ls-2">
+          <div class="ls-dot"></div>
+          <span>Загрузка метаданных</span>
+        </div>
+        <div class="loader-step" id="ls-3">
+          <div class="ls-dot"></div>
+          <span>Превью публикаций</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- /profile-loader -->
+
+  <!-- =====================================================
+       SETUP/LOGIN OVERLAYS
+       Встроены поверх макета, не меняют основную верстку
+  ====================================================== -->
+  <div class="auth-overlay" id="setup-overlay">
+    <div class="auth-modal">
+      <div class="auth-logo">
+        <span class="logo-bracket">[</span><span class="logo-name">ARCHIVER</span><span class="logo-bracket">]</span>
+        <span class="logo-version">setup</span>
+      </div>
+      <h2 class="auth-title">Инициализация администратора</h2>
+      <p class="auth-desc">
+        Создайте локального администратора. PostgreSQL поднимается Docker автоматически, а session и cookies хранятся только в encrypted vault.
+      </p>
+      <form class="auth-form" id="setup-form">
+        <label class="form-group">
+          <span class="form-label">Admin username</span>
+          <input class="form-input" id="setup-admin" minlength="3" required />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Admin password</span>
+          <input class="form-input" id="setup-password" type="password" minlength="8" required />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Confirm password</span>
+          <input class="form-input" id="setup-password-confirm" type="password" minlength="8" required />
+        </label>
+        <button class="btn-confirm-add auth-submit" type="submit">Инициализировать</button>
+        <button class="btn-cancel-add auth-submit" id="btn-show-login" type="button">Уже есть администратор</button>
+        <div class="auth-error" id="setup-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="auth-overlay" id="login-overlay">
+    <div class="auth-modal">
+      <div class="auth-logo">
+        <span class="logo-bracket">[</span><span class="logo-name">ARCHIVER</span><span class="logo-bracket">]</span>
+        <span class="logo-version">admin</span>
+      </div>
+      <h2 class="auth-title">Вход</h2>
+      <p class="auth-desc">Авторизуйтесь, чтобы управлять аккаунтами, настройками и задачами архивации.</p>
+      <form class="auth-form" id="login-form">
+        <label class="form-group">
+          <span class="form-label">Username</span>
+          <input class="form-input" id="login-username" required />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Password</span>
+          <input class="form-input" id="login-password" type="password" required />
+        </label>
+        <button class="btn-confirm-add auth-submit" type="submit">Войти</button>
+        <button class="btn-cancel-add auth-submit" id="btn-show-register" type="button">Инициализировать нового администратора</button>
+        <div class="auth-error" id="login-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="auth-overlay" id="settings-overlay">
+    <div class="settings-modal">
+      <div class="drawer-header">
+        <h2 class="drawer-title">Настройки сервиса</h2>
+        <button class="drawer-close" id="settings-close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <form class="settings-form" id="settings-form">
+        <label class="form-group">
+          <span class="form-label">Preview cache TTL, sec</span>
+          <input class="form-input" name="preview_cache_ttl_sec" type="number" min="60" />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Rate limit wait, sec</span>
+          <input class="form-input" name="rate_limit_wait_sec" type="number" min="60" />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Scheduler interval, sec</span>
+          <input class="form-input" name="scheduler_interval_sec" type="number" min="5" />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Default preview posts</span>
+          <input class="form-input" name="default_preview_posts" type="number" min="1" max="200" />
+        </label>
+        <label class="form-group">
+          <span class="form-label">Comments limit</span>
+          <input class="form-input" name="comments_limit" type="number" min="0" />
+        </label>
+        <label class="form-group settings-wide">
+          <span class="form-label">Archive directory</span>
+          <input class="form-input" name="archive_dir" />
+        </label>
+        <button class="btn-confirm-add settings-wide" type="submit">Сохранить</button>
+        <button class="btn-cancel-add settings-wide" type="button" id="btn-logout">Выйти из admin</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
