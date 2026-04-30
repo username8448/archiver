@@ -1,15 +1,15 @@
 # Instagram Archiver v4
 
-Локальный FastAPI-сервис для архивирования Instagram-профилей по ТЗ из `maket/Instagram_Archiver_v4.docx`.
+Локальный FastAPI-сервис для архивирования Instagram-профилей.
 
 ## Что реализовано
 
-- FastAPI backend + web UI в `static/`, визуально основанный на макете из `maket/`.
+- FastAPI backend + web UI в `static/`.
 - PostgreSQL вместо SQLite: профили, кэш, настройки, аккаунты, задачи и прогресс хранятся в Postgres.
 - Docker Compose поднимает PostgreSQL автоматически; строку подключения в UI вводить не нужно.
 - Несколько локальных администраторов: регистрация через кнопку `Инициализировать`, вход по логину/паролю, выход и вход другим admin.
 - Session/cookies Instagram не хранятся в коде, `.env` или JS. Они шифруются Fernet и лежат в encrypted vault.
-- Instaloader используется как источник данных Instagram. Для реальных запросов нужен валидный Instaloader session-файл.
+- `instagrapi` используется для preview/profile metadata по умолчанию; `gallery-dl`/`yt-dlp` используются для media download.
 
 ## Первый запуск
 
@@ -34,7 +34,8 @@ docker compose up --build
 3. Откройте:
 
 ```text
-м```
+http://127.0.0.1:8000
+```
 
 4. В форме первого входа создайте локального администратора кнопкой `Инициализировать`.
 
@@ -89,9 +90,11 @@ POSTGRES_PASSWORD=archiver_pass
 POSTGRES_DB=archiver
 APP_PORT=8000
 COOKIE_SECURE=false
+INSTAGRAM_PREVIEW_PROVIDER=instagrapi
 ```
 
 Для локального HTTP оставьте `COOKIE_SECURE=false`. Для HTTPS/reverse proxy можно поставить `COOKIE_SECURE=true`.
+`INSTAGRAM_PREVIEW_PROVIDER=instagrapi` — основной режим preview; `instaloader` остаётся только временным legacy fallback.
 
 ## Авторизация и регистрация
 
@@ -103,31 +106,29 @@ COOKIE_SECURE=false
 
 ## Секреты аккаунтов Instagram
 
-Через UI загрузите Instaloader session-файл или cookies-файл. Содержимое шифруется и сохраняется в Docker volume:
+Через UI загрузите полный browser cookie jar или instagrapi settings JSON. Содержимое шифруется и сохраняется в Docker volume:
 
 ```text
 archiver_state -> /home/app/.instagram_archiver
 ```
 
-API не возвращает содержимое секрета, `secret_id` или реальный путь. В Postgres хранятся только username, тип секрета, статус и служебные даты.
+API не возвращает содержимое секрета, `secret_id`, `settings_secret_id` или реальный путь. В Postgres хранятся только username, тип session, user-agent, статус и служебные даты.
 
-Session можно создать локально:
+Legacy Instaloader session всё ещё можно загрузить как fallback:
 
 ```bash
 instaloader --login=YOUR_USERNAME
 ```
 
-Затем загрузите session-файл через drawer `Аккаунты` в web UI.
+Затем загрузите session-файл через drawer `Аккаунты` в web UI. При успешной проверке приложение конвертирует его в instagrapi settings в encrypted vault.
 
-Самый удобный способ в UI: в drawer `Аккаунты` введите Instagram username и пароль, затем нажмите `Добавить`. Пароль используется только один раз для создания Instaloader session и не сохраняется. В encrypted vault сохраняются только session cookies; если Instagram запросит 2FA, введите код в поле `2FA код` и нажмите `Добавить` ещё раз.
-
-Также можно вставить одну строку `sessionid` прямо в форме добавления аккаунта:
+Одиночный `sessionid` можно вставить как legacy-вариант, но он менее стабилен, чем полный cookie jar:
 
 ```text
 sessionid:"ВАШ_SESSIONID"
 ```
 
-В этом случае выберите тип `Session ID строка`. Если sessionid валиден, username аккаунта определяется автоматически, поэтому поле username можно оставить пустым. Значение будет сохранено только в encrypted vault.
+В этом случае выберите тип `Legacy sessionid`. Если sessionid валиден, username аккаунта определяется автоматически, поэтому поле username можно оставить пустым. Приложение не хранит пароль Instagram и не выполняет автоматический relogin по паролю.
 
 ## Healthcheck
 
@@ -207,5 +208,8 @@ DATABASE_URL=postgresql://user:password@localhost:5432/archiver uvicorn app:app 
 
 - Одновременно разрешена только одна активная сетевая задача.
 - При активной задаче новое preview разрешено только из кэша.
-- Cookies-файлы безопасно сохраняются и валидируются по формату, но реальные Instagram-запросы сейчас выполняются через Instaloader session-файл.
-- `maket/` оставлен как исходный макет.
+- Preview-запросы выполняются через instagrapi; media download в default pipeline выполняется через `gallery-dl` для фото/каруселей и `yt-dlp` для видео.
+- Video/reel downloads retry transient `yt-dlp` failures up to `download_retry_attempts` total attempts; default is `2`.
+- API preview нормализует `profile.posts[].type` в `photo`, `video`, `carousel` или `unknown`.
+- Instagram-сессии основаны на cookie jar/settings; автоматический relogin по паролю не используется.
+- Instaloader остаётся только legacy fallback для старых session-файлов и не используется default media download path.

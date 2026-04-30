@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     "max_active_jobs": 1,
     "max_concurrent_downloads": 2,
     "download_timeout_sec": 300,
+    "download_retry_attempts": 2,
     "comments_limit": 500,
 }
 
@@ -39,8 +40,10 @@ RESUMABLE_FAILURES = {
     "NETWORK_ERROR",
     "DOWNLOAD_ERROR",
     "DOWNLOAD_FAILED",
+    "GALLERY_DL_NOT_AVAILABLE",
     "MEDIA_NOT_AVAILABLE",
     "TIMEOUT",
+    "YT_DLP_NOT_AVAILABLE",
     "ARCHIVE_ERROR",
     "STORAGE_ERROR",
 }

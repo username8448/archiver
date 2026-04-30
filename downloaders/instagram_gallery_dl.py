@@ -7,6 +7,7 @@ from pathlib import Path
 from downloaders.common import (
     DownloadResult,
     collect_media_files,
+    collect_sidecar_files,
     ensure_inside,
     instagram_post_url,
     module_available,
@@ -20,6 +21,7 @@ async def download_instagram_post(
     output_dir: Path,
     workspace: Path,
     timeout_sec: int,
+    cookie_file: Path | None = None,
 ) -> DownloadResult:
     """Downloads media for one public Instagram post into output_dir."""
     if not module_available("gallery_dl"):
@@ -38,13 +40,19 @@ async def download_instagram_post(
         return DownloadResult(ok=False, error_code="STORAGE_ERROR", error_message=str(exc))
 
     try:
+        args = [
+            "--no-input",
+            "--directory",
+            str(output_dir),
+            "--write-metadata",
+            "--write-info-json",
+        ]
+        if cookie_file is not None:
+            args.extend(["--cookies", str(cookie_file)])
+        args.append(instagram_post_url(shortcode))
         code, stdout, stderr = await run_python_module(
             "gallery_dl",
-            [
-                "--dest",
-                str(output_dir),
-                instagram_post_url(shortcode),
-            ],
+            args,
             cwd=workspace,
             timeout_sec=timeout_sec,
         )
@@ -54,11 +62,13 @@ async def download_instagram_post(
         return DownloadResult(ok=False, error_code="DOWNLOAD_FAILED", error_message=str(exc))
 
     media_files = collect_media_files(output_dir, workspace)
+    sidecar_files = collect_sidecar_files(output_dir, workspace)
     if code != 0:
         message = truncate_diagnostic(stderr or stdout) or "gallery-dl failed"
         return DownloadResult(
             ok=False,
             media_files=media_files,
+            sidecar_files=sidecar_files,
             error_code="DOWNLOAD_FAILED",
             error_message=message,
         )
@@ -68,4 +78,9 @@ async def download_instagram_post(
             error_code="MEDIA_NOT_AVAILABLE",
             error_message="gallery-dl did not produce media files for this post.",
         )
-    return DownloadResult(ok=True, media_files=media_files)
+    return DownloadResult(
+        ok=True,
+        media_files=media_files,
+        metadata_file=sidecar_files[0] if sidecar_files else None,
+        sidecar_files=sidecar_files,
+    )

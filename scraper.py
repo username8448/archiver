@@ -1,22 +1,13 @@
-"""Совместимая точка доступа к Instagram preview/download provider."""
+"""Application-wide Instagram provider instance."""
 
 from __future__ import annotations
 
-import os
-
-from providers.instagram import InstagrapiPreviewProvider, InstaloaderProvider
+from providers.instagram import InstagramPreviewProvider
 
 
 def create_instagram_provider():
-    """Создаёт provider по env, сохраняя instaloader как безопасный default."""
-    provider_name = os.getenv("INSTAGRAM_PREVIEW_PROVIDER", "instaloader").strip().lower()
-    if provider_name in {"", "instaloader"}:
-        return InstaloaderProvider()
-    if provider_name == "instagrapi":
-        return InstagrapiPreviewProvider()
-    raise RuntimeError(
-        "Unsupported INSTAGRAM_PREVIEW_PROVIDER. Use 'instaloader' or 'instagrapi'."
-    )
+    """Creates the only supported Instagram provider."""
+    return InstagramPreviewProvider()
 
 
 instagram_provider = create_instagram_provider()

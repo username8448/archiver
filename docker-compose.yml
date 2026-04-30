@@ -21,7 +21,6 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-archiver}:${POSTGRES_PASSWORD:-archiver_pass}@postgres:5432/${POSTGRES_DB:-archiver}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      INSTAGRAM_PREVIEW_PROVIDER: ${INSTAGRAM_PREVIEW_PROVIDER:-instaloader}
       HOME: /home/app
     ports:
       - "${APP_PORT:-8000}:8000"

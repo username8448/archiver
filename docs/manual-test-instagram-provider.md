@@ -5,13 +5,13 @@
 1. Start the stack with `docker compose up --build`.
 2. Open `http://127.0.0.1:8000/api/health` and confirm `status` is `ok`.
 3. Create or log in as a local admin.
-4. Add a valid Instagram account in the Accounts drawer.
-5. Keep `INSTAGRAM_PREVIEW_PROVIDER=instaloader` unless explicitly testing provider selection.
+4. Add a valid browser cookie jar or instagrapi settings JSON in the Accounts drawer.
+5. Keep `INSTAGRAM_PREVIEW_PROVIDER=instagrapi` unless explicitly testing rollback provider selection.
 
 ## Provider Selection
 
-1. Default mode should use `instaloader`.
-2. Set `INSTAGRAM_PREVIEW_PROVIDER=instagrapi` only to confirm the prepared optional provider fails with a clear `PROVIDER_ERROR`; full instagrapi preview is a later stage.
+1. Default mode should use `instagrapi`.
+2. Set `INSTAGRAM_PREVIEW_PROVIDER=instaloader` only to confirm the legacy rollback path still starts.
 3. Unknown provider names should fail startup with a clear configuration error.
 
 ## Profile Preview
@@ -37,7 +37,7 @@
    - `profile.posts_count`
    - `profile.profile_pic_url`
    - `profile.posts[].shortcode`
-   - `profile.posts[].type`
+   - `profile.posts[].type` as `photo`, `video`, `carousel`, or `unknown`
    - `profile.posts[].preview_url` or `null`
 
 3. Confirm unavailable fields are `null`, not fake generated values.
@@ -57,17 +57,17 @@
 3. Trigger an Instagram checkpoint case and confirm `CHECKPOINT_REQUIRED`.
 4. Use malformed cookies and confirm `COOKIES_FORMAT_UNKNOWN`.
 5. During temporary upstream failures, confirm `NETWORK_ERROR`, `TIMEOUT`, or `RATE_LIMIT` is returned and the account is not permanently invalidated.
-6. Confirm `SESSION_COOKIE_MISSING` is returned when login/password flow succeeds without a usable `sessionid`.
+6. Import settings/cookies without a usable `sessionid` and confirm `COOKIES_FORMAT_UNKNOWN` or `SESSION_COOKIE_MISSING`.
 
 ## Logging
 
 1. Check app logs for lines like:
 
    ```text
-   profile_preview_failed provider=instaloader target=username error_code=RATE_LIMIT
+   profile_preview_failed provider=instagrapi target=username error_code=RATE_LIMIT
    ```
 
-2. Confirm logs do not contain password, cookies, sessionid, encrypted secret ids, or full private media URLs.
+2. Confirm logs do not contain passwords, cookies, sessionid, encrypted secret ids, or full private media URLs.
 
 ## Frontend Compatibility
 
@@ -75,9 +75,18 @@
 2. Confirm grid and modal read `preview_url`, `caption`, `date`, `likes`, `comments`, and `type` from the backend response.
 3. Confirm invalid session, rate limit, admin unauthorized, and profile not found show clear UI messages.
 
+## Download Pipeline
+
+1. Create a selected-photo job and confirm `metadata.json` has `downloader: "gallery-dl"` and at least one `media_files` entry.
+2. Create a selected-carousel job and confirm `metadata.json` has `downloader: "gallery-dl"` and multiple carousel media files when Instagram exposes them.
+3. Create a selected-video or reel job and confirm `metadata.json` has `downloader: "yt-dlp"`, `download_attempts`, and at least one video file in `media_files`.
+4. Create a `meta-only` job and confirm `downloader` is `null` and `media_files` is empty.
+5. Force a transient yt-dlp failure if possible and confirm retry stops after the configured `download_retry_attempts`.
+6. Confirm failed video downloads still expose `result_path` and `metadata_path` in job status.
+7. Confirm the generated ZIP does not contain cookie files, sessionid strings, encrypted secret ids, or temporary downloader files.
+
 ## Current Limits
 
 - This stage does not implement aggressive scraping or rate-limit bypass.
-- This stage does not download all media files.
 - This stage does not access private content without valid account access.
-- Full `instagrapi` preview, `gallery-dl` media downloader, and `yt-dlp` video fallback are next-stage work.
+- Instaloader remains only as legacy fallback code, not the default media download path.

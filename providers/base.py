@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
 
@@ -30,16 +29,3 @@ class BaseProvider(ABC):
     @abstractmethod
     async def profile_preview(self, account, username: str, limit: int) -> dict[str, Any]:
         """Возвращает профиль и последние публикации."""
-
-    @abstractmethod
-    async def download_post(
-        self,
-        account,
-        username: str,
-        shortcode: str,
-        target_dir: Path,
-        include_media: bool,
-        include_comments: bool,
-        comments_limit: int,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Скачивает одну публикацию и возвращает metadata/comments."""

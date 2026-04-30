@@ -44,6 +44,24 @@ def save_secret(raw_bytes: bytes) -> str:
     return secret_id
 
 
+def replace_secret(secret_id: str, raw_bytes: bytes) -> None:
+    """Перезаписывает encrypted secret без изменения публичного secret_id."""
+    ensure_state_dirs()
+    path = VAULT_DIR / f"{secret_id}.bin"
+    encrypted = _fernet().encrypt(raw_bytes)
+    tmp_path = VAULT_DIR / f".{secret_id}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp_path.write_bytes(encrypted)
+        _chmod_private(tmp_path)
+        tmp_path.replace(path)
+        _chmod_private(path)
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def load_secret(secret_id: str) -> bytes:
     """Расшифровывает secret по id."""
     path = VAULT_DIR / f"{secret_id}.bin"

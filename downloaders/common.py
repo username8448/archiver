@@ -21,6 +21,7 @@ MEDIA_EXTENSIONS = {
     ".webm",
 }
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
+SIDECAR_EXTENSIONS = {".json", ".txt"}
 MAX_DIAGNOSTIC_CHARS = 800
 
 
@@ -29,6 +30,7 @@ class DownloadResult:
     ok: bool
     media_files: list[str] = field(default_factory=list)
     metadata_file: str | None = None
+    sidecar_files: list[str] = field(default_factory=list)
     error_code: str | None = None
     error_message: str | None = None
 
@@ -60,6 +62,18 @@ def collect_media_files(output_dir: Path, workspace: Path) -> list[str]:
         return files
     for path in sorted(output_dir.rglob("*")):
         if path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS:
+            files.append(path.resolve().relative_to(workspace.resolve()).as_posix())
+    return files
+
+
+def collect_sidecar_files(output_dir: Path, workspace: Path) -> list[str]:
+    """Returns downloader sidecar files under output_dir as workspace-relative POSIX paths."""
+    output_dir = ensure_inside(workspace, output_dir)
+    files: list[str] = []
+    if not output_dir.exists():
+        return files
+    for path in sorted(output_dir.rglob("*")):
+        if path.is_file() and path.suffix.lower() in SIDECAR_EXTENSIONS:
             files.append(path.resolve().relative_to(workspace.resolve()).as_posix())
     return files
 

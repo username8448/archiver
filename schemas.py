@@ -46,11 +46,17 @@ class SettingsUpdateRequest(BaseModel):
 class AccountResponse(BaseModel):
     id: str
     username: str
+    provider: str = "instagram"
     secret_kind: str
+    session_kind: str = "legacy"
+    user_agent: str | None = None
     status: str
     is_default: bool
     failure_reason: str | None = None
     last_validated_at: datetime | None = None
+    last_ok_at: datetime | None = None
+    last_error_at: datetime | None = None
+    last_error_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 

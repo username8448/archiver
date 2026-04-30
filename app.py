@@ -44,6 +44,7 @@ from schemas import (
     AccountResponse,
     HealthResponse,
     JobCreateRequest,
+    JobItemResponse,
     JobStatusResponse,
     LoginRequest,
     ProfilePreviewRequest,
@@ -56,7 +57,7 @@ from schemas import (
 from scraper import instagram_provider
 from security import hash_password, new_session_token, session_expires, token_hash, verify_password
 from settings_service import get_settings_map, seed_default_settings, update_settings_map
-from vault import delete_secret, ensure_master_key, save_secret
+from vault import delete_secret, ensure_master_key, replace_secret, save_secret
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("instagram_archiver")
@@ -80,19 +81,19 @@ AUTH_ACCOUNT_FAILURES = {
     "LOGIN_REQUIRED",
     "INVALID_SESSION",
     "CHECKPOINT_REQUIRED",
-    "SESSION_FILE_REQUIRED",
     "COOKIES_FORMAT_UNKNOWN",
+    "UNSUPPORTED_LEGACY_SESSION",
 }
 PROVIDER_ERROR_HTTP_STATUS = {
     "VALIDATION_ERROR": 422,
     "BAD_CREDENTIALS": 401,
     "LOGIN_FAILED": 401,
     "TWO_FACTOR_REQUIRED": 409,
-    "SESSION_FILE_REQUIRED": 400,
     "COOKIES_FORMAT_UNKNOWN": 400,
     "SESSION_COOKIE_MISSING": 401,
     "LOGIN_REQUIRED": 401,
     "INVALID_SESSION": 401,
+    "UNSUPPORTED_LEGACY_SESSION": 400,
     "CHECKPOINT_REQUIRED": 401,
     "PRIVATE_PROFILE": 403,
     "PROFILE_NOT_FOUND": 404,
@@ -100,7 +101,6 @@ PROVIDER_ERROR_HTTP_STATUS = {
     "NETWORK_ERROR": 502,
     "TIMEOUT": 504,
     "UPSTREAM_502": 502,
-    "INSTALOADER_NOT_INSTALLED": 503,
     "PROVIDER_ERROR": 502,
     "UNKNOWN_ERROR": 502,
     "UNKNOWN": 502,
@@ -108,10 +108,11 @@ PROVIDER_ERROR_HTTP_STATUS = {
 PROVIDER_ERROR_MESSAGES = {
     "ADMIN_UNAUTHORIZED": "Нужен вход администратора",
     "PROFILE_NOT_FOUND": "Профиль Instagram не найден",
-    "LOGIN_REQUIRED": "Instagram-сессия недействительна, обновите cookies/session",
-    "INVALID_SESSION": "Instagram-сессия недействительна, обновите cookies/session",
+    "LOGIN_REQUIRED": "Instagram-сессия недействительна, обновите cookies/settings",
+    "INVALID_SESSION": "Instagram-сессия недействительна, обновите cookies/settings",
     "CHECKPOINT_REQUIRED": "Instagram требует подтверждения входа",
-    "COOKIES_FORMAT_UNKNOWN": "Cookies/session не распознаны, обновите account",
+    "COOKIES_FORMAT_UNKNOWN": "Cookies/settings не распознаны, обновите account",
+    "UNSUPPORTED_LEGACY_SESSION": "Старый формат сессии больше не поддерживается, загрузите cookies/settings",
     "BAD_CREDENTIALS": "Instagram не принял логин или пароль",
     "SESSION_COOKIE_MISSING": "Instagram не выдал sessionid, подтвердите вход и повторите",
     "RATE_LIMIT": "Временный rate limit Instagram. Повторите позже",
@@ -122,8 +123,6 @@ PROVIDER_ERROR_MESSAGES = {
 }
 PROVIDER_REASON_ALIASES = {
     "LOGIN_FAILED": "BAD_CREDENTIALS",
-    "SESSION_FILE_REQUIRED": "INVALID_SESSION",
-    "INSTALOADER_NOT_INSTALLED": "PROVIDER_ERROR",
     "UNKNOWN": "UNKNOWN_ERROR",
 }
 
@@ -346,32 +345,35 @@ async def list_accounts(user: AdminUser = Depends(current_admin), db=Depends(get
 @app.post("/api/accounts", response_model=AccountResponse)
 async def create_account(
     username: str | None = Form(None),
-    secret_kind: str = Form("session"),
+    secret_kind: str = Form("cookies"),
     secret_value: str | None = Form(None),
     secret_file: UploadFile | None = File(None),
     user: AdminUser = Depends(current_admin),
     db=Depends(get_session),
 ):
-    """Загружает session/cookies, шифрует и сохраняет только metadata в Postgres."""
+    """Загружает cookies/settings, шифрует и сохраняет только metadata в Postgres."""
     has_secret_value = bool(secret_value and secret_value.strip())
-    if has_secret_value and secret_kind == "session":
-        secret_kind = "sessionid"
-    if secret_kind == "sessionid":
-        secret_kind = "cookies"
-    if secret_kind not in {"session", "cookies"}:
-        raise HTTPException(status_code=400, detail="secret_kind must be session, sessionid or cookies")
+    if secret_kind not in {"cookies", "settings", "instagrapi_settings"}:
+        raise HTTPException(status_code=400, detail="secret_kind must be cookies, settings or instagrapi_settings")
 
     if has_secret_value:
         raw = secret_value.strip().encode("utf-8")
     elif secret_file is not None:
         raw = await secret_file.read()
     else:
-        raise HTTPException(status_code=400, detail="Secret file or sessionid string is required")
+        raise HTTPException(status_code=400, detail="Secret file or cookies/settings string is required")
 
     if not raw:
         raise HTTPException(status_code=400, detail="Secret value is empty")
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Secret file is too large")
+
+    try:
+        session_kind = _detect_session_kind(secret_kind, raw, has_secret_value)
+        stored_secret_kind = _stored_secret_kind(secret_kind)
+        user_agent = _extract_session_user_agent(raw)
+    except ProviderError as exc:
+        _raise_provider_http(exc)
 
     normalized_username: str | None = None
     username_input = (username or "").strip()
@@ -383,12 +385,12 @@ async def create_account(
 
     inferred_username: str | None = None
     try:
-        inferred_username = await instagram_provider.infer_account_username(secret_kind, raw, normalized_username)
+        inferred_username = await instagram_provider.infer_account_username(stored_secret_kind, raw, normalized_username)
     except ProviderError as exc:
         if normalized_username is None:
             raise HTTPException(
                 status_code=400,
-                detail="Не удалось автоматически определить username. Введите username вручную или проверьте sessionid.",
+                detail="Не удалось автоматически определить username. Введите username вручную или проверьте cookies/settings.",
             ) from exc
         logger.info("Could not infer Instagram account username from secret: %s", exc.reason)
 
@@ -396,32 +398,18 @@ async def create_account(
     if username is None:
         raise HTTPException(
             status_code=400,
-            detail="Не удалось автоматически определить username. Введите username вручную или проверьте sessionid.",
+            detail="Не удалось автоматически определить username. Введите username вручную или проверьте cookies/settings.",
         )
 
-    return await _store_account_secret(db, username, secret_kind, raw, assume_valid=bool(inferred_username))
-
-
-@app.post("/api/accounts/login", response_model=AccountResponse)
-async def login_instagram_account(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    two_factor_code: str | None = Form(None),
-    user: AdminUser = Depends(current_admin),
-    db=Depends(get_session),
-):
-    """Создаёт полноценную Instaloader session по логину/паролю без сохранения пароля."""
-    _check_auth_rate_limit(request, "instagram_login")
-    if not password:
-        raise HTTPException(status_code=400, detail="Instagram password is required")
-    try:
-        account_username, raw = await instagram_provider.login_with_password(username, password, two_factor_code)
-    except ProviderError as exc:
-        _raise_provider_http(exc)
-    return await _store_account_secret(db, account_username, "cookies", raw, assume_valid=True)
-
-
+    return await _store_account_secret(
+        db,
+        username,
+        stored_secret_kind,
+        raw,
+        session_kind=session_kind,
+        user_agent=user_agent,
+        assume_valid=False,
+    )
 @app.post("/api/accounts/{account_id}/default")
 async def set_default_account(account_id: str, user: AdminUser = Depends(current_admin), db=Depends(get_session)):
     """Выбирает аккаунт по умолчанию для сетевых запросов."""
@@ -441,13 +429,8 @@ async def validate_account(account_id: str, user: AdminUser = Depends(current_ad
     account = await db.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    ok, reason = await instagram_provider.validate_account(account)
-    if ok:
-        account.status = "OK"
-    elif reason not in TRANSIENT_ACCOUNT_FAILURES:
-        account.status = "INVALID_SESSION"
-    account.failure_reason = reason
-    account.last_validated_at = utcnow()
+    ok, reason = await _validate_account_with_session_update(account)
+    _apply_account_validation_result(account, ok, reason)
     await db.commit()
     await db.refresh(account)
     return AccountResponse.model_validate(account, from_attributes=True)
@@ -460,6 +443,7 @@ async def delete_account(account_id: str, user: AdminUser = Depends(current_admi
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     delete_secret(account.secret_id)
+    delete_secret(account.settings_secret_id)
     await db.delete(account)
     await db.commit()
     return {"ok": True}
@@ -510,7 +494,9 @@ async def profile_preview(
     account = await _default_account(db)
     try:
         preview = await instagram_provider.profile_preview(account, username, limit)
+        _apply_account_session_update(account, _pop_provider_session_update(preview))
         preview = _normalize_preview_payload(preview)
+        _apply_account_validation_result(account, True, None)
     except ProviderError as exc:
         await _mark_account_failed(db, account, exc)
         error_code = _normalize_provider_error_code(exc)
@@ -561,13 +547,24 @@ async def create_job(
     settings = await get_settings_map(db)
     account = await _default_account(db)
     shortcodes = list(dict.fromkeys(payload.shortcodes))
+    cache = await db.get(ProfileCache, username)
+    preview_posts_by_shortcode: dict[str, dict] = {}
+    if cache is not None:
+        cached_profile = _normalize_preview_payload(cache.payload)
+        preview_posts_by_shortcode = {
+            post["shortcode"]: post
+            for post in cached_profile.get("posts", [])
+            if post.get("shortcode")
+        }
 
     if payload.mode != "selected":
         limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
-        cache = await db.get(ProfileCache, username)
         if cache is None or not _preview_cache_is_usable(cache, limit):
             try:
                 preview = await instagram_provider.profile_preview(account, username, limit)
+                _apply_account_session_update(account, _pop_provider_session_update(preview))
+                preview = _normalize_preview_payload(preview)
+                _apply_account_validation_result(account, True, None)
             except ProviderError as exc:
                 await _mark_account_failed(db, account, exc)
                 _raise_provider_http(exc)
@@ -585,7 +582,19 @@ async def create_job(
                 cache.payload = preview
                 cache.fetched_at = utcnow()
                 cache.account_id = account.id
-        posts = cache.payload.get("posts", [])
+            preview_posts_by_shortcode = {
+                post["shortcode"]: post
+                for post in preview.get("posts", [])
+                if post.get("shortcode")
+            }
+        else:
+            cached_profile = _normalize_preview_payload(cache.payload)
+            preview_posts_by_shortcode = {
+                post["shortcode"]: post
+                for post in cached_profile.get("posts", [])
+                if post.get("shortcode")
+            }
+        posts = list(preview_posts_by_shortcode.values())
         shortcodes = [post["shortcode"] for post in posts[:limit]]
 
     if not shortcodes:
@@ -608,11 +617,17 @@ async def create_job(
     db.add(job)
     await db.flush()
     for shortcode in shortcodes:
-        db.add(JobItem(job_id=job.id, shortcode=shortcode))
+        db.add(
+            JobItem(
+                job_id=job.id,
+                shortcode=shortcode,
+                media_type=preview_posts_by_shortcode.get(shortcode, {}).get("type") or "unknown",
+            )
+        )
     await db.commit()
     await db.refresh(job)
     schedule_job(job.id)
-    return _job_response(job)
+    return await _job_response(db, job)
 
 
 @app.get("/api/jobs", response_model=list[JobStatusResponse])
@@ -625,7 +640,7 @@ async def list_jobs(user: AdminUser = Depends(current_admin), db=Depends(get_ses
             .limit(50)
         )
     ).scalars().all()
-    return [_job_response(job) for job in rows]
+    return [await _job_response(db, job) for job in rows]
 
 
 @app.get("/api/jobs/{job_id}/status", response_model=JobStatusResponse)
@@ -634,7 +649,7 @@ async def job_status(job_id: str, user: AdminUser = Depends(current_admin), db=D
     job = await db.get(Job, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return _job_response(job)
+    return await _job_response(db, job)
 
 
 @app.post("/api/jobs/{job_id}/resume", response_model=JobStatusResponse)
@@ -652,7 +667,7 @@ async def job_resume(job_id: str, user: AdminUser = Depends(current_admin), db=D
     await db.commit()
     await db.refresh(job)
     schedule_job(job.id)
-    return _job_response(job)
+    return await _job_response(db, job)
 
 
 @app.get("/api/jobs/{job_id}/download")
@@ -691,6 +706,8 @@ async def _store_account_secret(
     username: str,
     secret_kind: str,
     raw: bytes,
+    session_kind: str,
+    user_agent: str | None = None,
     assume_valid: bool = False,
 ) -> AccountResponse:
     """Сохраняет encrypted Instagram secret и account metadata без раскрытия секрета."""
@@ -698,39 +715,146 @@ async def _store_account_secret(
     existing = (await db.execute(select(Account).where(Account.username == username))).scalar_one_or_none()
     if existing:
         delete_secret(existing.secret_id)
+        delete_secret(existing.settings_secret_id)
         account = existing
         account.secret_id = secret_id
         account.secret_kind = secret_kind
+        account.settings_secret_id = None
+        account.provider = "instagram"
+        account.session_kind = session_kind
+        account.user_agent = user_agent
         account.status = "NEW"
         account.failure_reason = None
+        account.last_error_reason = None
+        account.last_error_at = None
     else:
         has_accounts = (await db.execute(select(func.count(Account.id)))).scalar_one() > 0
-        account = Account(username=username, secret_id=secret_id, secret_kind=secret_kind, is_default=not has_accounts)
+        account = Account(
+            username=username,
+            provider="instagram",
+            secret_id=secret_id,
+            secret_kind=secret_kind,
+            session_kind=session_kind,
+            user_agent=user_agent,
+            is_default=not has_accounts,
+        )
         db.add(account)
     await db.flush()
 
     if assume_valid:
-        ok, reason = True, None
+        if session_kind == "instagrapi_settings":
+            account.settings_secret_id = save_secret(raw)
+        _apply_account_validation_result(account, True, None)
     else:
-        ok, reason = await instagram_provider.validate_account(account)
-    if ok:
-        account.status = "OK"
-    elif reason not in TRANSIENT_ACCOUNT_FAILURES:
-        account.status = "INVALID_SESSION"
-    account.failure_reason = reason
-    account.last_validated_at = utcnow()
+        ok, reason = await _validate_account_with_session_update(account)
+        _apply_account_validation_result(account, ok, reason)
     await db.commit()
     await db.refresh(account)
     return AccountResponse.model_validate(account, from_attributes=True)
 
 
+async def _validate_account_with_session_update(account: Account) -> tuple[bool, str | None]:
+    """Validates an account and persists provider-returned settings on the async side."""
+    validator = getattr(instagram_provider, "validate_account_with_session_update", None)
+    if callable(validator):
+        ok, reason, session_update = await validator(account)
+        if ok:
+            try:
+                _apply_account_session_update(account, session_update)
+            except ProviderError as exc:
+                return False, exc.reason
+        return ok, reason
+    return await instagram_provider.validate_account(account)
+
+
+def _pop_provider_session_update(payload: dict) -> object | None:
+    """Removes non-JSON provider session data before normalizing/caching preview."""
+    if not isinstance(payload, dict):
+        return None
+    return payload.pop("_session_update", None)
+
+
+def _apply_account_session_update(account: Account, session_update: object | None) -> None:
+    """Persists refreshed instagrapi settings without mutating SQLAlchemy objects in worker threads."""
+    if session_update is None:
+        return
+
+    raw_settings = getattr(session_update, "raw_settings", None)
+    if not isinstance(raw_settings, bytes) or not raw_settings:
+        raise ProviderError("PROVIDER_ERROR", "Instagram provider вернул пустые session settings")
+
+    try:
+        if account.settings_secret_id:
+            replace_secret(account.settings_secret_id, raw_settings)
+        else:
+            account.settings_secret_id = save_secret(raw_settings)
+    except Exception as exc:
+        raise ProviderError("PROVIDER_ERROR", "Не удалось сохранить Instagram session settings") from exc
+
+    account.provider = "instagram"
+    account.user_agent = getattr(session_update, "user_agent", None)
+
+
+def _detect_session_kind(secret_kind: str, raw: bytes, has_secret_value: bool = False) -> str:
+    detector = getattr(instagram_provider, "detect_session_kind", None)
+    if callable(detector):
+        try:
+            return detector(secret_kind, raw, has_secret_value)
+        except ProviderError:
+            raise
+        except Exception:
+            logger.info("Could not classify Instagram session kind", exc_info=True)
+    if secret_kind in {"settings", "instagrapi_settings"}:
+        return "instagrapi_settings"
+    if secret_kind == "cookies":
+        return "browser_cookies"
+    return "unsupported_legacy"
+
+
+def _stored_secret_kind(secret_kind: str) -> str:
+    normalizer = getattr(instagram_provider, "stored_secret_kind", None)
+    if callable(normalizer):
+        return normalizer(secret_kind)
+    return "cookies" if secret_kind in {"cookies", "settings", "instagrapi_settings"} else secret_kind
+
+
+def _extract_session_user_agent(raw: bytes) -> str | None:
+    extractor = getattr(instagram_provider, "extract_user_agent", None)
+    if callable(extractor):
+        try:
+            return extractor(raw)
+        except Exception:
+            return None
+    return None
+
+
+def _apply_account_validation_result(account: Account, ok: bool, reason: str | None) -> None:
+    now = utcnow()
+    account.last_validated_at = now
+    if ok:
+        account.status = "OK"
+        account.failure_reason = None
+        account.last_ok_at = now
+        account.last_error_at = None
+        account.last_error_reason = None
+        return
+
+    account.failure_reason = reason
+    account.last_error_at = now
+    account.last_error_reason = reason
+    if reason not in TRANSIENT_ACCOUNT_FAILURES:
+        account.status = "INVALID_SESSION"
+
+
 async def _mark_account_failed(db, account: Account, exc: ProviderError) -> None:
     """Помечает текущий Instagram account невалидным при ошибке auth/secret."""
+    account.last_error_at = utcnow()
+    account.last_error_reason = exc.reason
+    account.failure_reason = exc.reason
     if exc.reason in AUTH_ACCOUNT_FAILURES:
         account.status = "INVALID_SESSION"
-        account.failure_reason = exc.reason
         account.last_validated_at = utcnow()
-        await db.commit()
+    await db.commit()
 
 
 async def initialize_database_with_retry(retries: int = 30, delay_sec: float = 2.0) -> None:
@@ -771,27 +895,50 @@ async def create_admin_session(db, user: AdminUser, response: Response) -> None:
     _set_session_cookie(response, token)
 
 
-def _job_response(job: Job) -> JobStatusResponse:
+async def _job_response(db, job: Job) -> JobStatusResponse:
     archive_path = Path(job.archive_path) if job.archive_path else None
     archive_exists = archive_path.exists() if archive_path else False
     archive_ready = job.status == "DONE" and archive_exists
+    items_done = int(getattr(job, "items_done", 0) or 0)
+    completed_items = int(getattr(job, "completed_items", 0) or 0)
     return JobStatusResponse(
         id=job.id,
+        job_id=job.id,
+        target=job.username,
         username=job.username,
+        mode=job.mode,
         status=job.status,
-        items_done=job.items_done,
+        items_done=items_done,
         items_total=job.items_total,
+        completed_items=completed_items or items_done,
+        failed_items=int(getattr(job, "failed_items", 0) or 0),
         retry_after_at=job.retry_after_at,
         failure_reason=job.failure_reason,
+        error_code=job.error_code,
         error_message=job.error_message,
         archive_ready=archive_ready,
         can_resume=can_resume(job),
         download_url=f"/api/jobs/{job.id}/download" if archive_ready else None,
+        result_dir=job.result_dir,
         archive_filename=archive_path.name if archive_ready and archive_path else None,
         archive_size_bytes=archive_path.stat().st_size if archive_ready and archive_path else None,
+        items=await _job_item_responses(db, job.id),
         created_at=job.created_at,
         updated_at=job.updated_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
     )
+
+
+async def _job_item_responses(db, job_id: str) -> list[JobItemResponse]:
+    rows = (
+        await db.execute(
+            select(JobItem)
+            .where(JobItem.job_id == job_id)
+            .order_by(JobItem.id.asc())
+        )
+    ).scalars().all()
+    return [JobItemResponse.model_validate(row, from_attributes=True) for row in rows]
 
 
 def _is_allowed_media_proxy_host(host: str) -> bool:
@@ -879,9 +1026,9 @@ def _normalize_preview_post(post: dict) -> dict:
     """Нормализует post preview, сохраняя только реальные provider поля."""
     shortcode = post.get("shortcode")
     post_type = post.get("type")
-    if post_type == "photo":
-        post_type = "image"
-    if post_type not in {"image", "video", "carousel", "unknown"}:
+    if post_type == "image":
+        post_type = "photo"
+    if post_type not in {"photo", "video", "carousel", "unknown"}:
         post_type = "video" if post.get("is_video") else "unknown"
     return {
         "shortcode": shortcode,
@@ -892,6 +1039,8 @@ def _normalize_preview_post(post: dict) -> dict:
         "date": post.get("date") or None,
         "likes": _optional_int(post.get("likes")),
         "comments": _optional_int(post.get("comments")),
+        "location": post.get("location") or None,
+        "carousel_count": _optional_int(post.get("carousel_count")),
         "is_video": bool(post.get("is_video") or post_type == "video"),
     }
 

@@ -147,16 +147,6 @@
             <button class="recent-clear-btn" id="btn-clear-history">Очистить</button>
           </div>
           <div class="recent-list" id="recent-list">
-            <button class="recent-item" data-val="natgeo">
-              <span class="recent-icon">⏱</span>
-              <span>natgeo</span>
-              <span class="recent-time">5 мин назад</span>
-            </button>
-            <button class="recent-item" data-val="nasa">
-              <span class="recent-icon">⏱</span>
-              <span>nasa</span>
-              <span class="recent-time">2 дня назад</span>
-            </button>
           </div>
         </div>
 
@@ -166,7 +156,7 @@
       <footer class="search-footer">
         <div class="footer-status">
           <span class="status-dot status-ok"></span>
-          <span>Instaloader готов</span>
+          <span>Instagrapi готов</span>
         </div>
         <div class="footer-info">
           PostgreSQL · <span id="db-size">vault</span> · Локальная сессия: <span class="session-badge">активна</span>
@@ -198,7 +188,7 @@
         <div class="breadcrumb">
           <span class="breadcrumb-platform">instagram</span>
           <span class="breadcrumb-sep">/</span>
-          <span class="breadcrumb-username" id="bc-username">natgeo</span>
+          <span class="breadcrumb-username" id="bc-username">—</span>
         </div>
       </div>
 
@@ -243,8 +233,7 @@
           <!-- Аватар профиля -->
           <div class="profile-avatar-wrap">
             <div class="profile-avatar" id="profile-avatar">
-              <!-- Иницалы как заглушка (в реальности — <img>) -->
-              <span id="profile-initials">NG</span>
+              <span id="profile-initials">IG</span>
               <!-- Верификация -->
               <div class="verified-badge" title="Верифицированный аккаунт">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="#F97316">
@@ -256,8 +245,8 @@
 
           <!-- Имя и username -->
           <div class="profile-identity">
-            <h2 class="profile-fullname" id="profile-fullname">National Geographic</h2>
-            <span class="profile-username" id="profile-username">@natgeo</span>
+            <h2 class="profile-fullname" id="profile-fullname">—</h2>
+            <span class="profile-username" id="profile-username">@—</span>
             <!-- Тип аккаунта -->
             <span class="profile-type-badge">Публичный</span>
           </div>
@@ -265,37 +254,35 @@
           <!-- Счётчики профиля -->
           <div class="profile-stats">
             <div class="stat-item">
-              <span class="stat-value" id="stat-posts">1 848</span>
+              <span class="stat-value" id="stat-posts">—</span>
               <span class="stat-label">публикаций</span>
             </div>
             <div class="stat-divider"></div>
             <div class="stat-item">
-              <span class="stat-value" id="stat-followers">19.4M</span>
+              <span class="stat-value" id="stat-followers">—</span>
               <span class="stat-label">подписчиков</span>
             </div>
             <div class="stat-divider"></div>
             <div class="stat-item">
-              <span class="stat-value" id="stat-following">143</span>
+              <span class="stat-value" id="stat-following">—</span>
               <span class="stat-label">подписок</span>
             </div>
           </div>
 
           <!-- Биография профиля -->
           <div class="profile-bio" id="profile-bio">
-            <p>🌍 Inspiring people to care about the planet since 1888.</p>
-            <p>📷 Photos & stories from our photographers & explorers.</p>
-            <a href="#" class="bio-link" onclick="return false">natgeo.com/wildwatch</a>
+            <p>Загрузите профиль через поиск.</p>
           </div>
 
           <!-- Мета-информация: дата регистрации, категория -->
           <div class="profile-meta">
             <div class="meta-row">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-              <span>С 2010 года в Instagram</span>
+              <span>—</span>
             </div>
             <div class="meta-row">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              <span>Издание / СМИ</span>
+              <span>—</span>
             </div>
           </div>
 
@@ -462,7 +449,7 @@
                 <line x1="12" y1="15" x2="12" y2="3"/>
               </svg>
               Скачать ZIP
-              <span class="zip-size">178.4 MB</span>
+              <span class="zip-size">—</span>
             </button>
           </div>
 
@@ -480,7 +467,7 @@
             </div>
 
             <div class="progress-details">
-              <span id="progress-current">0</span> / <span id="progress-total">30</span> постов
+              <span id="progress-current">0</span> / <span id="progress-total">0</span> постов
             </div>
 
             <div class="progress-controls">
@@ -543,7 +530,7 @@
         <div class="stories-strip" id="stories-strip">
           <div class="stories-header">
             <span class="stories-title">Stories Highlights</span>
-            <span class="stories-count" id="stories-count">14 highlights</span>
+            <span class="stories-count" id="stories-count">0 highlights</span>
           </div>
           <div class="stories-scroll" id="stories-scroll">
             <!-- Stories генерируются JavaScript'ом -->
@@ -613,7 +600,7 @@
           <!-- Конец списка -->
           <div class="grid-end" id="grid-end" style="display:none">
             <div class="grid-end-line"></div>
-            <span>Загружено <strong id="total-loaded">48</strong> из <strong>1848</strong> публикаций</span>
+            <span>Загружено <strong id="total-loaded">0</strong> из <strong>0</strong> публикаций</span>
             <button class="btn-load-more" id="btn-load-more">Загрузить ещё 48</button>
           </div>
         </div>
@@ -661,11 +648,7 @@
         <div class="preview-media-type" id="preview-media-type"></div>
         <!-- Основное изображение/видео -->
         <div class="preview-media-content" id="preview-media-content">
-          <!-- Заглушка изображения -->
-          <div class="preview-img-placeholder" id="preview-img-placeholder">
-            <div class="placeholder-pattern"></div>
-            <div class="placeholder-shimmer"></div>
-          </div>
+          <div class="preview-fallback">Preview недоступно</div>
         </div>
         <!-- Навигация по каруселям -->
         <div class="carousel-dots" id="carousel-dots"></div>
@@ -676,10 +659,10 @@
 
         <!-- Шапка поста: автор и дата -->
         <div class="preview-post-header">
-          <div class="preview-author-avatar" id="preview-author-avatar">NG</div>
+          <div class="preview-author-avatar" id="preview-author-avatar">IG</div>
           <div class="preview-author-info">
-            <span class="preview-author-name" id="preview-author-name">natgeo</span>
-            <span class="preview-post-date" id="preview-post-date">14 апр 2024</span>
+            <span class="preview-author-name" id="preview-author-name">—</span>
+            <span class="preview-post-date" id="preview-post-date">—</span>
           </div>
           <!-- Кнопка выделения поста из модала -->
           <div class="preview-select-wrap">
@@ -696,13 +679,13 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
             </svg>
-            <span id="preview-likes">247K</span>
+            <span id="preview-likes">—</span>
           </div>
           <div class="post-stat">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            <span id="preview-comments-count">1.2K</span>
+            <span id="preview-comments-count">—</span>
           </div>
           <div class="post-stat post-stat-type">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -710,7 +693,7 @@
               <circle cx="8.5" cy="8.5" r="1.5"/>
               <polyline points="21 15 16 10 5 21"/>
             </svg>
-            <span id="preview-type-label">Фото</span>
+            <span id="preview-type-label">—</span>
           </div>
           <div class="post-stat">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -722,14 +705,14 @@
               <line x1="3" y1="12" x2="3.01" y2="12"/>
               <line x1="3" y1="18" x2="3.01" y2="18"/>
             </svg>
-            <span id="preview-post-id">shortcode: AbCdEfG</span>
+            <span id="preview-post-id">—</span>
           </div>
         </div>
 
         <!-- Описание поста -->
         <div class="preview-caption-wrap">
           <div class="preview-caption" id="preview-caption">
-            Загрузка описания поста...
+            —
           </div>
           <button class="caption-toggle" id="caption-toggle">Читать полностью</button>
         </div>
@@ -817,8 +800,8 @@
       <!-- Описание -->
       <p class="drawer-desc">
         Привязанные Instagram-аккаунты для авторизованного скачивания.
-        Session file используется для доступа к приватному контенту.
-        Создать session можно командой: <code>instaloader --login=YOUR_USERNAME</code>.
+        Session/cookies используются для доступа к приватному контенту.
+        Legacy session можно создать командой: <code>instaloader --login=YOUR_USERNAME</code>.
       </p>
 
       <!-- Список аккаунтов -->
@@ -857,62 +840,39 @@
           <input
             type="text"
             class="form-input"
-            placeholder="@username"
+            placeholder="@username или оставьте пустым для автоопределения"
             id="new-account-username"
             autocomplete="off"
           />
         </div>
-        <div class="form-group">
-          <label class="form-label">Пароль Instagram</label>
-          <input
-            type="password"
-            class="form-input"
-            placeholder="Не сохраняется, только создаёт encrypted session"
-            id="new-account-password"
-            autocomplete="off"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label">2FA код</label>
-          <input
-            type="text"
-            class="form-input"
-            placeholder="Если Instagram попросит код"
-            id="new-account-2fa"
-            inputmode="numeric"
-            autocomplete="one-time-code"
-          />
-        </div>
-        <button class="btn-secret-mode" id="btn-toggle-secret-mode" type="button">
-          Другой способ: session файл / sessionid
-        </button>
-        <div class="advanced-secret-block" id="advanced-secret-block" style="display:none">
+        <div class="advanced-secret-block" id="advanced-secret-block" style="display:flex">
           <div class="form-group">
-            <label class="form-label">Session файл</label>
+            <label class="form-label">Cookie jar / settings файл</label>
             <div class="file-drop-zone" id="session-drop-zone">
               <input type="file" id="session-file-input" class="sr-only" />
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
               </svg>
-              <span>Перетащите .session/cookies файл или <u>выберите</u></span>
+              <span>Перетащите cookies/settings файл или <u>выберите</u></span>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">Session ID строка</label>
+            <label class="form-label">Cookie jar / legacy sessionid</label>
             <textarea
               class="form-input form-textarea"
               id="new-account-secret-value"
-              placeholder='sessionid:"80162251144%3A..."'
+              placeholder='sessionid=...; csrftoken=...; ds_user_id=...'
               spellcheck="false"
             ></textarea>
           </div>
           <div class="form-group">
-            <label class="form-label">Тип секрета</label>
+            <label class="form-label">Тип импорта</label>
             <select class="form-input" id="new-account-secret-kind">
-              <option value="session">Instaloader session</option>
-              <option value="sessionid">Session ID строка</option>
-              <option value="cookies">Cookies file</option>
+              <option value="cookies">Browser cookie jar</option>
+              <option value="settings">Instagrapi settings JSON</option>
+              <option value="sessionid">Legacy sessionid</option>
+              <option value="session">Legacy Instaloader session</option>
             </select>
           </div>
         </div>
@@ -931,8 +891,8 @@
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
         <p>
-          Archiver не обходит ограничения Instagram. Session файлы хранятся
-          локально и используются только для авторизованных запросов через Instaloader.
+          Archiver не обходит ограничения Instagram. Session/cookies хранятся
+          локально и используются только для авторизованных запросов через instagrapi.
         </p>
       </div>
 
@@ -1014,7 +974,7 @@
 
   <!-- =====================================================
        SETUP/LOGIN OVERLAYS
-       Встроены поверх макета, не меняют основную верстку
+       Встроены поверх основной верстки
   ====================================================== -->
   <div class="auth-overlay" id="setup-overlay">
     <div class="auth-modal">
