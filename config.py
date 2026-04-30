@@ -19,8 +19,14 @@ DEFAULT_ARCHIVE_DIR = STATE_DIR / "archives"
 SESSION_COOKIE_NAME = "archiver_session"
 SESSION_TTL_SECONDS = 60 * 60 * 12
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in {"1", "true", "yes", "on"}
+TRUSTED_PROXY_HEADERS = os.getenv("TRUSTED_PROXY_HEADERS", "").lower() in {"1", "true", "yes", "on"}
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+ARCHIVE_DIR_ALLOWED_ROOTS = tuple(
+    Path(value).expanduser()
+    for value in os.getenv("ARCHIVE_DIR_ALLOWED_ROOTS", "").split(os.pathsep)
+    if value.strip()
+)
 
 DEFAULT_SETTINGS = {
     "preview_cache_ttl_sec": 3600,

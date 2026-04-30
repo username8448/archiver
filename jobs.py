@@ -12,9 +12,10 @@ from sqlalchemy import func, select
 from archive import build_zip, workspace_for_job, write_json
 from config import RESUMABLE_FAILURES
 from database import session_context
-from downloaders.common import DownloadResult
+from downloaders.common import DownloadResult, redact_diagnostic
 from downloaders.cookies import downloader_cookie_file
 from downloaders.providers import downloader_for_media_type
+from instagram_ids import normalize_instagram_shortcode
 from models import Account, Comment, Job, JobItem, Post, ProfileCache, utcnow
 from providers.base import ProviderError
 from scraper import instagram_provider
@@ -77,7 +78,7 @@ async def run_job(job_id: str) -> None:
         cache = await db.get(ProfileCache, job.username)
         cached_posts = _cached_posts_by_shortcode(cache)
         if cache:
-            write_json(workspace / "profile.json", cache.payload)
+            write_json(workspace / "profile.json", cache.payload, workspace)
         write_json(
             workspace / "README.txt",
             {
@@ -86,6 +87,7 @@ async def run_job(job_id: str) -> None:
                 "created_at": job.created_at.isoformat(),
                 "note": "Архив создан локально Instagram Archiver.",
             },
+            workspace,
         )
 
         rows = (
@@ -112,7 +114,7 @@ async def run_job(job_id: str) -> None:
                     await _fail_job(db, job, exc.reason, exc.message)
                     return
                 except Exception as exc:
-                    await _fail_job(db, job, "DOWNLOAD_ERROR", str(exc))
+                    await _fail_job(db, job, "DOWNLOAD_ERROR", redact_diagnostic(str(exc)))
                     return
 
             for item in rows:
@@ -129,13 +131,14 @@ async def run_job(job_id: str) -> None:
                 await _refresh_job_counters(db, job)
                 await db.commit()
                 try:
-                    post_dir = workspace / "posts" / item.shortcode
+                    shortcode = _safe_shortcode(item.shortcode)
+                    post_dir = workspace / "posts" / shortcode
                     post_dir.mkdir(parents=True, exist_ok=True)
                     item.result_path = str(post_dir)
                     metadata, comments = await _post_metadata_and_comments(
                         account,
                         job.username,
-                        item.shortcode,
+                        shortcode,
                         item.media_type,
                         cached_posts,
                         include_comments,
@@ -151,7 +154,7 @@ async def run_job(job_id: str) -> None:
                     metadata.update(
                         {
                             "username": job.username,
-                            "shortcode": item.shortcode,
+                            "shortcode": shortcode,
                             "type": media_type,
                             "media_files": [],
                             "sidecar_files": [],
@@ -163,11 +166,11 @@ async def run_job(job_id: str) -> None:
                         }
                     )
                     metadata_path = post_dir / "metadata.json"
-                    write_json(metadata_path, metadata)
+                    write_json(metadata_path, metadata, workspace)
                     item.metadata_done = True
                     item.metadata_path = str(metadata_path)
                     if include_comments:
-                        write_json(post_dir / "comments.json", comments)
+                        write_json(post_dir / "comments.json", comments, workspace)
                         item.comments_done = True
                     await db.commit()
 
@@ -181,7 +184,7 @@ async def run_job(job_id: str) -> None:
                         metadata["downloader"] = downloader.name
                         result, attempts = await _download_with_retry(
                             downloader,
-                            item.shortcode,
+                            shortcode,
                             post_dir / "media",
                             workspace,
                             download_timeout_sec,
@@ -195,16 +198,16 @@ async def run_job(job_id: str) -> None:
                         if not result.ok:
                             metadata["error_code"] = result.error_code or "DOWNLOAD_FAILED"
                             metadata["error_message"] = result.error_message or f"{downloader.name} failed"
-                            write_json(metadata_path, metadata)
+                            write_json(metadata_path, metadata, workspace)
                             raise ProviderError(
                                 result.error_code or "DOWNLOAD_FAILED",
                                 result.error_message or f"{downloader.name} failed",
                             )
-                        write_json(metadata_path, metadata)
+                        write_json(metadata_path, metadata, workspace)
 
-                    db.add(Post(username=job.username, job_id=job.id, shortcode=item.shortcode, payload=metadata))
+                    db.add(Post(username=job.username, job_id=job.id, shortcode=shortcode, payload=metadata))
                     for comment in comments:
-                        db.add(Comment(post_shortcode=item.shortcode, job_id=job.id, payload=comment))
+                        db.add(Comment(post_shortcode=shortcode, job_id=job.id, payload=comment))
 
                     item.media_done = bool(include_media)
                     item.comments_done = include_comments
@@ -226,7 +229,7 @@ async def run_job(job_id: str) -> None:
                         db,
                         job,
                         item,
-                        ProviderError("DOWNLOAD_ERROR", str(exc)),
+                        ProviderError("DOWNLOAD_ERROR", redact_diagnostic(str(exc))),
                         settings,
                     )
                     return
@@ -242,7 +245,7 @@ async def run_job(job_id: str) -> None:
             await _refresh_job_counters(db, job)
             await db.commit()
         except Exception as exc:
-            await _fail_job(db, job, "ARCHIVE_ERROR", str(exc))
+            await _fail_job(db, job, "ARCHIVE_ERROR", redact_diagnostic(str(exc)))
 
 
 async def _downloader_cookies(account: Account) -> dict[str, str]:
@@ -373,6 +376,13 @@ def _optional_int(value: object) -> int | None:
         return None
 
 
+def _safe_shortcode(value: object) -> str:
+    try:
+        return normalize_instagram_shortcode(value)
+    except ValueError as exc:
+        raise ProviderError("VALIDATION_ERROR", "Некорректный shortcode Instagram") from exc
+
+
 async def resume_scheduler() -> None:
     """Периодически возобновляет WAITING-задачи после retry_after_at."""
     while True:
@@ -398,29 +408,31 @@ async def resume_scheduler() -> None:
 
 
 async def _handle_provider_error(db, job: Job, item: JobItem, exc: ProviderError, settings: dict) -> None:
+    safe_message = redact_diagnostic(exc.message)
     item.status = "FAILED"
     item.error_reason = exc.reason
     item.error_code = exc.reason
-    item.error_message = exc.message
+    item.error_message = safe_message
     item.finished_at = utcnow()
     if exc.reason == "RATE_LIMIT":
         job.status = "WAITING"
         job.retry_after_at = utcnow() + timedelta(seconds=int(settings.get("rate_limit_wait_sec", 3600)))
     else:
         job.status = "FAILED"
-        job.finished_at = utcnow()
+    job.finished_at = utcnow()
     job.failure_reason = exc.reason
     job.error_code = exc.reason
-    job.error_message = exc.message
+    job.error_message = safe_message
     await _refresh_job_counters(db, job)
     await db.commit()
 
 
 async def _fail_job(db, job: Job, reason: str, message: str) -> None:
+    safe_message = redact_diagnostic(message)
     job.status = "FAILED"
     job.failure_reason = reason
     job.error_code = reason
-    job.error_message = message
+    job.error_message = safe_message
     job.finished_at = utcnow()
     await _refresh_job_counters(db, job)
     await db.commit()

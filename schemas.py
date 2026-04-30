@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from instagram_ids import normalize_instagram_shortcode
 
 
 class SetupStatusResponse(BaseModel):
@@ -63,7 +65,7 @@ class AccountResponse(BaseModel):
 
 class ProfilePreviewRequest(BaseModel):
     target: str
-    limit: int | None = Field(default=None, ge=1, le=200)
+    limit: int | None = Field(default=None, ge=0, le=200)
     force_refresh: bool = False
 
 
@@ -82,6 +84,11 @@ class JobCreateRequest(BaseModel):
     shortcodes: list[str] = Field(default_factory=list)
     limit: int | None = Field(default=None, ge=1, le=500)
     options: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("shortcodes")
+    @classmethod
+    def validate_shortcodes(cls, value: list[str]) -> list[str]:
+        return [normalize_instagram_shortcode(shortcode) for shortcode in value]
 
 
 class JobItemResponse(BaseModel):

@@ -41,12 +41,16 @@
    - `profile.posts[].preview_url` or `null`
 
 3. Confirm unavailable fields are `null`, not fake generated values.
+4. Test a public profile with `posts_count: 0` and confirm the response contains `posts: []`.
+5. Confirm app logs show `user_info_ms` but `user_medias_ms=0.00` for that empty profile.
+6. Test a profile with 1-3 posts and confirm logs show `media_limit` no larger than `media_count`.
+7. Test a larger profile with `limit: 12` and confirm logs show `media_limit=12` when `media_count >= 12`.
 
 ## Cache
 
 1. Repeat the same request with `force_refresh: false`.
 2. Confirm response may use `source: "cache"`.
-3. Send `force_refresh: true` and confirm it bypasses cache.
+3. Send `force_refresh: true` and confirm it bypasses app cache and provider logs include `force_refresh=True`.
 4. Confirm an empty cache is not returned as success when `posts_count > 0`.
 5. Confirm a truly empty profile is represented as `posts_count: 0` and `posts: []`.
 
@@ -64,10 +68,14 @@
 1. Check app logs for lines like:
 
    ```text
+   profile_preview_start provider=instagrapi target=username limit=12 force_refresh=True
+   profile_preview_provider_timing provider=instagrapi target=username client_from_session_ms=... user_info_ms=... user_medias_ms=... settings_update_ms=0.00 total_ms=...
+   profile_preview_success provider=instagrapi target=username source=fresh vault_save_ms=0.00 total_ms=...
    profile_preview_failed provider=instagrapi target=username error_code=RATE_LIMIT
    ```
 
 2. Confirm logs do not contain passwords, cookies, sessionid, encrypted secret ids, or full private media URLs.
+3. Confirm repeat preview with saved `settings_secret_id` does not trigger a cookie-completion `GET https://www.instagram.com/` during preview.
 
 ## Frontend Compatibility
 

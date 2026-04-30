@@ -37,6 +37,10 @@ const POST_TYPES = {
   },
 };
 
+const INITIAL_POST_BATCH = 12;
+const LOAD_MORE_BATCH = 24;
+const MAX_PREVIEW_POSTS = 200;
+
 const state = {
   currentProfile: null,
   currentPage: 'search',
@@ -63,6 +67,8 @@ const apiRuntime = {
   currentJobId: null,
   pollTimer: null,
   secretFile: null,
+  profileRequestSeq: 0,
+  postsLoading: false,
 };
 
 function formatNumber(value) {
@@ -362,6 +368,8 @@ async function loadProfile(rawInput, options = {}) {
     return;
   }
 
+  const requestSeq = apiRuntime.profileRequestSeq + 1;
+  apiRuntime.profileRequestSeq = requestSeq;
   try {
     setSearchBusy(true);
     showLiveLoader(username);
@@ -369,7 +377,7 @@ async function loadProfile(rawInput, options = {}) {
       method: 'POST',
       body: {
         target: username,
-        limit: Math.max(1, safeNumber(options.limit, state.postsCount || 30)),
+        limit: 0,
         force_refresh: Boolean(options.forceRefresh),
       },
     });
@@ -388,14 +396,23 @@ async function loadProfile(rawInput, options = {}) {
     state.activeTab = 'posts';
     state.activeFilter = 'all';
     apiRuntime.lastPreview = payload;
+    apiRuntime.postsLoading = !profileData.isPrivate && safeNumber(profileData.postsCount, 0) > state.posts.length;
     addToHistory(profileData.username);
     renderProfile(profileData);
     showPage('profile');
     const freshness = document.querySelector('.freshness-text');
     if (freshness) freshness.textContent = (payload.source === 'cache' || payload.from_cache) ? 'Загружено из кэша' : 'Загружено только что';
     showToast(`Профиль @${profileData.username} успешно загружен`, 'ok');
+    if (apiRuntime.postsLoading) {
+      loadPreviewPosts(profileData.username, INITIAL_POST_BATCH, {
+        requestSeq,
+        forceRefresh: Boolean(options.forceRefresh),
+        initial: true,
+      });
+    }
   } catch (error) {
     showToast(normalizeApiError(error), 'err');
+    apiRuntime.postsLoading = false;
   } finally {
     hideLiveLoader();
     setSearchBusy(false);
@@ -510,6 +527,7 @@ function getFilteredPosts() {
 }
 
 function postsEmptyMessage() {
+  if (apiRuntime.postsLoading) return 'Загружаем публикации...';
   if (state.activeTab === 'tagged') return 'Отмеченные публикации недоступны через текущий API.';
   if (state.activeTab === 'reels') return 'Видео/Reels не найдены в загруженном preview.';
   if (state.activeFilter !== 'all') return 'Для выбранного фильтра нет публикаций в текущем preview.';
@@ -545,9 +563,10 @@ function renderPostsGrid() {
   if (totalEl) totalEl.textContent = total.toLocaleString('ru-RU');
   const loadMore = document.getElementById('btn-load-more');
   if (loadMore) {
-    const canLoadMore = state.activeTab === 'posts' && state.activeFilter === 'all' && state.posts.length < total;
+    const previewTotal = Math.min(total, MAX_PREVIEW_POSTS);
+    const canLoadMore = state.activeTab === 'posts' && state.activeFilter === 'all' && state.posts.length < previewTotal;
     loadMore.style.display = canLoadMore ? 'inline-flex' : 'none';
-    loadMore.textContent = 'Загрузить ещё 24';
+    loadMore.textContent = `Загрузить ещё ${LOAD_MORE_BATCH}`;
   }
 }
 
@@ -1346,37 +1365,61 @@ function setFormBusy(form, busy, busyText) {
   });
 }
 
-async function loadMorePosts() {
-  if (!state.currentProfile) return;
+async function loadPreviewPosts(username, limit, options = {}) {
+  const requestSeq = options.requestSeq ?? apiRuntime.profileRequestSeq;
   const loader = document.getElementById('grid-loader');
   const endEl = document.getElementById('grid-end');
   try {
+    apiRuntime.postsLoading = true;
     if (loader) loader.style.display = 'flex';
     if (endEl) endEl.style.display = 'none';
-    const nextLimit = state.posts.length + 24;
     const payload = await apiRequest('/api/profile/preview', {
       method: 'POST',
-      body: { target: state.currentProfile.username, limit: nextLimit, force_refresh: true },
+      body: { target: username, limit, force_refresh: Boolean(options.forceRefresh) },
     });
+    if (requestSeq !== apiRuntime.profileRequestSeq || state.currentProfile?.username !== username) return null;
     if (payload?.ok === false) {
       const error = new Error(payload.message || payload.error_code || 'Ошибка Instagram preview');
       error.status = 502;
       error.errorCode = payload.error_code || null;
       throw error;
     }
+    apiRuntime.postsLoading = false;
     state.currentProfile = mapApiProfile(payload);
     state.posts = mapApiPosts(payload.profile?.posts);
     syncSelectionWithPosts();
     renderProfile(state.currentProfile);
     const freshness = document.querySelector('.freshness-text');
-    if (freshness) freshness.textContent = 'Загружено только что';
-    showToast(`Загружено ${state.posts.length} публикаций`, 'ok');
+    if (freshness) freshness.textContent = (payload.source === 'cache' || payload.from_cache) ? 'Публикации из кэша' : 'Публикации загружены';
+    if (!options.initial) showToast(`Загружено ${state.posts.length} публикаций`, 'ok');
+    return payload;
   } catch (error) {
+    if (requestSeq !== apiRuntime.profileRequestSeq || state.currentProfile?.username !== username) return null;
+    apiRuntime.postsLoading = false;
+    renderPostsGrid();
     showToast(normalizeApiError(error), 'warn');
+    return null;
   } finally {
-    if (loader) loader.style.display = 'none';
-    if (endEl) endEl.style.display = 'flex';
+    if (requestSeq === apiRuntime.profileRequestSeq && state.currentProfile?.username === username) {
+      if (loader) loader.style.display = 'none';
+      if (endEl) endEl.style.display = 'flex';
+    }
   }
+}
+
+async function loadMorePosts() {
+  if (!state.currentProfile || apiRuntime.postsLoading) return;
+  const total = safeNumber(state.currentProfile.postsCount, state.posts.length);
+  const nextLimit = Math.min(
+    MAX_PREVIEW_POSTS,
+    total || state.posts.length + LOAD_MORE_BATCH,
+    state.posts.length + LOAD_MORE_BATCH,
+  );
+  await loadPreviewPosts(state.currentProfile.username, nextLimit, {
+    requestSeq: apiRuntime.profileRequestSeq,
+    forceRefresh: false,
+    initial: false,
+  });
 }
 
 function bindApiEventListeners() {
@@ -1412,7 +1455,7 @@ function bindApiEventListeners() {
   document.getElementById('btn-open-accounts-2')?.addEventListener('click', openAccountsDrawer);
   document.getElementById('btn-back')?.addEventListener('click', () => showPage('search'));
   document.getElementById('btn-refresh-profile')?.addEventListener('click', () => {
-    if (state.currentProfile) loadProfile(state.currentProfile.username, { forceRefresh: true, limit: Math.max(state.posts.length, state.postsCount || 30) });
+    if (state.currentProfile) loadProfile(state.currentProfile.username, { forceRefresh: true });
   });
   document.querySelectorAll('input[name="dl-mode"]').forEach(radio => {
     radio.addEventListener('change', () => setDownloadMode(radio.value));

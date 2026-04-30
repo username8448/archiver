@@ -27,5 +27,5 @@ class BaseProvider(ABC):
         """Проверяет пригодность сохранённого account secret."""
 
     @abstractmethod
-    async def profile_preview(self, account, username: str, limit: int) -> dict[str, Any]:
+    async def profile_preview(self, account, username: str, limit: int, force_refresh: bool = False) -> dict[str, Any]:
         """Возвращает профиль и последние публикации."""

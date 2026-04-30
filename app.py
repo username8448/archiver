@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, func, select, text
 
+from archive import ensure_allowed_archive_path
 from bootstrap import is_configured
 from config import (
     APP_VERSION,
@@ -33,10 +34,12 @@ from config import (
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
     STATIC_DIR,
+    TRUSTED_PROXY_HEADERS,
     VAULT_DIR,
     ensure_state_dirs,
 )
 from database import close_engine, get_session, init_engine
+from instagram_ids import normalize_instagram_shortcode
 from jobs import can_resume, find_active_job, resume_scheduler, schedule_job
 from models import Account, AdminSession, AdminUser, Job, JobItem, ProfileCache, utcnow
 from providers.base import ProviderError
@@ -56,11 +59,18 @@ from schemas import (
 )
 from scraper import instagram_provider
 from security import hash_password, new_session_token, session_expires, token_hash, verify_password
-from settings_service import get_settings_map, seed_default_settings, update_settings_map
+from settings_service import SettingsValidationError, get_settings_map, seed_default_settings, update_settings_map
 from vault import delete_secret, ensure_master_key, replace_secret, save_secret
 
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
-logger = logging.getLogger("instagram_archiver")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=LOG_LEVEL)
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(LOG_LEVEL)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    logger.addHandler(handler)
+logger.propagate = False
 
 app = FastAPI(title="Instagram Archiver", version="1.0.0")
 
@@ -127,6 +137,15 @@ PROVIDER_REASON_ALIASES = {
 }
 
 
+def _safe_timing_log(message: str, *args: object) -> None:
+    """Emits preview timing logs to uvicorn logger and stdout without secrets."""
+    logger.info(message, *args)
+    try:
+        print(message % args, flush=True)
+    except Exception:
+        pass
+
+
 @app.on_event("startup")
 async def startup() -> None:
     """Готовит скрытые каталоги, Postgres schema, defaults и scheduler."""
@@ -179,14 +198,15 @@ async def health() -> HealthResponse:
             version=APP_VERSION,
             admins_initialized=admin_count > 0,
         )
-    except Exception as exc:
+    except Exception:
+        logger.info("Health check failed", exc_info=True)
         return HealthResponse(
             status="degraded",
             database_connected=False,
             vault_ready=vault_ready,
             version=APP_VERSION,
             admins_initialized=False,
-            error=str(exc),
+            error="Service dependencies are not ready",
         )
 
 
@@ -207,8 +227,13 @@ async def setup_status() -> SetupStatusResponse:
             admin_count = (await db.execute(select(func.count(AdminUser.id)))).scalar_one()
             break
         return SetupStatusResponse(configured=True, database_connected=True, needs_login=admin_count > 0)
-    except Exception as exc:
-        return SetupStatusResponse(configured=True, database_connected=False, error=str(exc))
+    except Exception:
+        logger.info("Setup status check failed", exc_info=True)
+        return SetupStatusResponse(
+            configured=True,
+            database_connected=False,
+            error="Сервисные зависимости временно недоступны.",
+        )
 
 
 @app.post("/api/setup/initialize")
@@ -236,6 +261,9 @@ async def register(payload: RegisterRequest, request: Request, response: Respons
 async def _register_admin(payload: RegisterRequest, request: Request, response: Response, db):
     """Общая реализация регистрации local admin."""
     _check_auth_rate_limit(request, "register")
+    admin_count = (await db.execute(select(func.count(AdminUser.id)))).scalar_one()
+    if admin_count > 0:
+        raise HTTPException(status_code=409, detail="Первичный администратор уже создан")
     username = payload.username.strip()
     if len(username) < 3:
         raise HTTPException(status_code=422, detail="Username должен быть не короче 3 символов")
@@ -332,7 +360,11 @@ async def put_settings(
     db=Depends(get_session),
 ):
     """Обновляет runtime-настройки через UI/API."""
-    return {"settings": await update_settings_map(db, payload.settings)}
+    try:
+        settings = await update_settings_map(db, payload.settings)
+    except SettingsValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"settings": settings}
 
 
 @app.get("/api/accounts", response_model=list[AccountResponse])
@@ -456,55 +488,94 @@ async def profile_preview(
     db=Depends(get_session),
 ):
     """Возвращает preview профиля из кэша или через выбранный Instagram provider."""
+    request_started_at = monotonic()
+    vault_save_ms = 0.0
     settings = await get_settings_map(db)
     try:
         username = instagram_provider.normalize_target(payload.target)
     except ProviderError as exc:
         _raise_provider_http(exc)
-    limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
+    limit = payload.limit if payload.limit is not None else int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
+    profile_only = limit <= 0
     now = utcnow()
+    _safe_timing_log(
+        "profile_preview_start provider=%s target=%s limit=%s force_refresh=%s",
+        _provider_name(),
+        username,
+        limit,
+        bool(payload.force_refresh),
+    )
 
     cache = await db.get(ProfileCache, username)
     if cache and cache.expires_at > now and not payload.force_refresh and _preview_cache_is_usable(cache, limit):
         cached_profile = _normalize_preview_payload(cache.payload)
-        logger.info("profile_preview_success provider=%s target=%s source=cache", _provider_name(), username)
+        response_profile = _limit_preview_payload(cached_profile, limit)
+        _safe_timing_log(
+            "profile_preview_success provider=%s target=%s source=cache vault_save_ms=%.2f total_ms=%.2f",
+            _provider_name(),
+            username,
+            vault_save_ms,
+            _duration_ms(request_started_at),
+        )
         return ProfilePreviewResponse(
             ok=True,
             source="cache",
             from_cache=True,
             cached_until=cache.expires_at,
-            profile=cached_profile,
+            profile=response_profile,
             error=None,
         )
 
     if await find_active_job(db):
         if cache and cache.expires_at > now and _preview_cache_is_usable(cache, limit):
             cached_profile = _normalize_preview_payload(cache.payload)
-            logger.info("profile_preview_success provider=%s target=%s source=cache", _provider_name(), username)
+            response_profile = _limit_preview_payload(cached_profile, limit)
+            _safe_timing_log(
+                "profile_preview_success provider=%s target=%s source=cache vault_save_ms=%.2f total_ms=%.2f",
+                _provider_name(),
+                username,
+                vault_save_ms,
+                _duration_ms(request_started_at),
+            )
             return ProfilePreviewResponse(
                 ok=True,
                 source="cache",
                 from_cache=True,
                 cached_until=cache.expires_at,
-                profile=cached_profile,
+                profile=response_profile,
                 error=None,
             )
+        _safe_timing_log(
+            "profile_preview_failed provider=%s target=%s error_code=ACTIVE_JOB vault_save_ms=%.2f total_ms=%.2f",
+            _provider_name(),
+            username,
+            vault_save_ms,
+            _duration_ms(request_started_at),
+        )
         raise HTTPException(status_code=409, detail="Активная задача выполняется; превью доступно только из кэша")
 
     account = await _default_account(db)
     try:
-        preview = await instagram_provider.profile_preview(account, username, limit)
-        _apply_account_session_update(account, _pop_provider_session_update(preview))
+        preview = await instagram_provider.profile_preview(
+            account,
+            username,
+            limit,
+            force_refresh=payload.force_refresh,
+        )
+        _pop_provider_session_update(preview)
         preview = _normalize_preview_payload(preview)
+        response_preview = _limit_preview_payload(preview, limit)
         _apply_account_validation_result(account, True, None)
     except ProviderError as exc:
         await _mark_account_failed(db, account, exc)
         error_code = _normalize_provider_error_code(exc)
-        logger.info(
-            "profile_preview_failed provider=%s target=%s error_code=%s",
+        _safe_timing_log(
+            "profile_preview_failed provider=%s target=%s error_code=%s vault_save_ms=%.2f total_ms=%.2f",
             _provider_name(),
             username,
             error_code,
+            vault_save_ms,
+            _duration_ms(request_started_at),
         )
         return _provider_error_json_response(exc)
     ttl = int(settings.get("preview_cache_ttl_sec", DEFAULT_SETTINGS["preview_cache_ttl_sec"]))
@@ -514,18 +585,24 @@ async def profile_preview(
         cache = ProfileCache(username=username, payload=preview, fetched_at=now, expires_at=expires_at, account_id=account.id)
         db.add(cache)
     else:
-        cache.payload = preview
+        cache.payload = _merge_profile_only_preview_cache(cache.payload, preview) if profile_only else preview
         cache.fetched_at = now
         cache.expires_at = expires_at
         cache.account_id = account.id
     await db.commit()
-    logger.info("profile_preview_success provider=%s target=%s source=fresh", _provider_name(), username)
+    _safe_timing_log(
+        "profile_preview_success provider=%s target=%s source=fresh vault_save_ms=%.2f total_ms=%.2f",
+        _provider_name(),
+        username,
+        vault_save_ms,
+        _duration_ms(request_started_at),
+    )
     return ProfilePreviewResponse(
         ok=True,
         source="fresh",
         from_cache=False,
         cached_until=expires_at,
-        profile=preview,
+        profile=response_preview,
         error=None,
     )
 
@@ -546,7 +623,10 @@ async def create_job(
         _raise_provider_http(exc)
     settings = await get_settings_map(db)
     account = await _default_account(db)
-    shortcodes = list(dict.fromkeys(payload.shortcodes))
+    try:
+        shortcodes = list(dict.fromkeys(normalize_instagram_shortcode(shortcode) for shortcode in payload.shortcodes))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Некорректный shortcode Instagram") from exc
     cache = await db.get(ProfileCache, username)
     preview_posts_by_shortcode: dict[str, dict] = {}
     if cache is not None:
@@ -562,7 +642,7 @@ async def create_job(
         if cache is None or not _preview_cache_is_usable(cache, limit):
             try:
                 preview = await instagram_provider.profile_preview(account, username, limit)
-                _apply_account_session_update(account, _pop_provider_session_update(preview))
+                _pop_provider_session_update(preview)
                 preview = _normalize_preview_payload(preview)
                 _apply_account_validation_result(account, True, None)
             except ProviderError as exc:
@@ -595,7 +675,10 @@ async def create_job(
                 if post.get("shortcode")
             }
         posts = list(preview_posts_by_shortcode.values())
-        shortcodes = [post["shortcode"] for post in posts[:limit]]
+        try:
+            shortcodes = [normalize_instagram_shortcode(post["shortcode"]) for post in posts[:limit]]
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Некорректный shortcode Instagram") from exc
 
     if not shortcodes:
         raise HTTPException(status_code=400, detail="Нет публикаций для архивации")
@@ -678,7 +761,10 @@ async def job_download(job_id: str, user: AdminUser = Depends(current_admin), db
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "DONE" or not job.archive_path:
         raise HTTPException(status_code=409, detail="Архив ещё не готов")
-    path = Path(job.archive_path)
+    path = _safe_job_archive_path(job)
+    if path is None:
+        logger.info("Rejected unsafe archive download path for job %s", job.id)
+        raise HTTPException(status_code=404, detail="Archive file not found")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Archive file not found")
     return FileResponse(path, media_type="application/zip", filename=path.name)
@@ -896,7 +982,7 @@ async def create_admin_session(db, user: AdminUser, response: Response) -> None:
 
 
 async def _job_response(db, job: Job) -> JobStatusResponse:
-    archive_path = Path(job.archive_path) if job.archive_path else None
+    archive_path = _safe_job_archive_path(job)
     archive_exists = archive_path.exists() if archive_path else False
     archive_ready = job.status == "DONE" and archive_exists
     items_done = int(getattr(job, "items_done", 0) or 0)
@@ -928,6 +1014,19 @@ async def _job_response(db, job: Job) -> JobStatusResponse:
         started_at=job.started_at,
         finished_at=job.finished_at,
     )
+
+
+def _safe_job_archive_path(job: Job) -> Path | None:
+    if not job.archive_path:
+        return None
+    try:
+        path = ensure_allowed_archive_path(Path(job.archive_path))
+        if path.suffix.lower() != ".zip":
+            raise ValueError("Archive file is not a ZIP")
+        return path
+    except ValueError:
+        logger.info("Ignoring unsafe archive path for job %s", job.id)
+        return None
 
 
 async def _job_item_responses(db, job_id: str) -> list[JobItemResponse]:
@@ -1022,6 +1121,24 @@ def _normalize_preview_payload(payload: dict) -> dict:
     return profile
 
 
+def _limit_preview_payload(payload: dict, limit: int) -> dict:
+    """Returns the profile contract capped to the requested preview post count."""
+    profile = dict(payload if isinstance(payload, dict) else {})
+    posts = profile.get("posts")
+    posts = posts if isinstance(posts, list) else []
+    profile["posts"] = [] if limit <= 0 else posts[:limit]
+    return profile
+
+
+def _merge_profile_only_preview_cache(existing_payload: dict, fresh_profile: dict) -> dict:
+    """Updates profile metadata while preserving already cached post previews."""
+    existing = _normalize_preview_payload(existing_payload)
+    merged = dict(fresh_profile if isinstance(fresh_profile, dict) else {})
+    if existing.get("posts"):
+        merged["posts"] = existing["posts"]
+    return merged
+
+
 def _normalize_preview_post(post: dict) -> dict:
     """Нормализует post preview, сохраняя только реальные provider поля."""
     shortcode = post.get("shortcode")
@@ -1052,12 +1169,18 @@ def _optional_int(value: object) -> int | None:
         return None
 
 
+def _duration_ms(started_at: float) -> float:
+    return round((monotonic() - started_at) * 1000, 2)
+
+
 def _preview_cache_is_usable(cache: ProfileCache, requested_limit: int) -> bool:
     """Не отдаёт пустой/битый preview cache как успешную загрузку профиля."""
     payload = cache.payload if isinstance(cache.payload, dict) else {}
     posts = payload.get("posts")
     if not isinstance(posts, list):
         posts = []
+    if int(requested_limit or 0) <= 0:
+        return bool(payload)
     try:
         posts_count = int(payload.get("posts_count") or 0)
     except (TypeError, ValueError):
@@ -1071,7 +1194,9 @@ def _preview_cache_is_usable(cache: ProfileCache, requested_limit: int) -> bool:
 def _check_auth_rate_limit(request: Request, action: str) -> None:
     """Простой in-memory rate limit для локальных auth endpoints."""
     now = monotonic()
-    ip = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    ip = ""
+    if TRUSTED_PROXY_HEADERS:
+        ip = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     if not ip and request.client:
         ip = request.client.host
     key = (ip or "local", action)

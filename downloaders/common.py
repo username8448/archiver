@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from instagram_ids import normalize_instagram_shortcode
 
 
 MEDIA_EXTENSIONS = {
@@ -23,6 +26,16 @@ MEDIA_EXTENSIONS = {
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 SIDECAR_EXTENSIONS = {".json", ".txt"}
 MAX_DIAGNOSTIC_CHARS = 800
+SECRET_PATTERNS = (
+    re.compile(r"(?i)(sessionid=)[^;\s]+"),
+    re.compile(r"(?i)(csrftoken=)[^;\s]+"),
+    re.compile(r"(?i)(ds_user_id=)[^;\s]+"),
+    re.compile(r"(?i)(\"sessionid\"\s*:\s*\")[^\"]+"),
+    re.compile(r"(?i)(\"csrftoken\"\s*:\s*\")[^\"]+"),
+    re.compile(r"(?i)(\"ds_user_id\"\s*:\s*\")[^\"]+"),
+    re.compile(r"(?i)(--cookies\s+)\S+"),
+    re.compile(r"(?i)(archiver-downloader-cookies-)[^\s]+"),
+)
 
 
 @dataclass(slots=True)
@@ -42,6 +55,7 @@ def module_available(module_name: str) -> bool:
 
 def instagram_post_url(shortcode: str) -> str:
     """Builds the canonical Instagram post URL for a real shortcode."""
+    shortcode = normalize_instagram_shortcode(shortcode)
     return f"https://www.instagram.com/p/{shortcode}/"
 
 
@@ -83,9 +97,17 @@ def has_video_file(media_files: list[str]) -> bool:
     return any(Path(path).suffix.lower() in VIDEO_EXTENSIONS for path in media_files)
 
 
+def redact_diagnostic(value: str) -> str:
+    """Redacts session-like values from subprocess/provider diagnostics."""
+    text = str(value or "")
+    for pattern in SECRET_PATTERNS:
+        text = pattern.sub(r"\1[REDACTED]", text)
+    return text
+
+
 def truncate_diagnostic(value: str) -> str:
     """Keeps subprocess diagnostics short and secret-safe."""
-    text = " ".join((value or "").split())
+    text = " ".join(redact_diagnostic(value).split())
     if len(text) <= MAX_DIAGNOSTIC_CHARS:
         return text
     return text[:MAX_DIAGNOSTIC_CHARS].rstrip() + "..."

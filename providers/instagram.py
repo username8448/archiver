@@ -4,16 +4,33 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import tempfile
 from dataclasses import dataclass
 from datetime import timezone
 from http.cookiejar import MozillaCookieJar
+from time import monotonic
 from typing import Any
 from urllib.parse import unquote
 
 from providers.base import BaseProvider, ProviderError
 from vault import load_secret
+
+logger = logging.getLogger("uvicorn.error")
+
+
+def _duration_ms(started_at: float) -> float:
+    return round((monotonic() - started_at) * 1000, 2)
+
+
+def _safe_timing_log(message: str, *args: object) -> None:
+    """Emits provider timing logs without session/cookie values."""
+    logger.info(message, *args)
+    try:
+        print(message % args, flush=True)
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,14 +85,14 @@ class SessionStore:
                 return user_agent
         return None
 
-    def settings_from_secret(self, raw_secret: bytes) -> dict[str, Any] | None:
+    def settings_from_secret(self, raw_secret: bytes, allow_network: bool = True) -> dict[str, Any] | None:
         data = self.settings_json_payload(raw_secret)
         if data is None or not self.looks_like_settings(data):
             return None
 
         settings = dict(data)
         cookies = self.cookies_from_settings(settings)
-        self.complete_instagram_cookies(cookies)
+        self.complete_instagram_cookies(cookies, allow_network=allow_network)
         settings["cookies"] = cookies
         settings["authorization_data"] = self.authorization_data_from_cookies(
             cookies,
@@ -124,8 +141,8 @@ class SessionStore:
             raise ProviderError("COOKIES_FORMAT_UNKNOWN", "Instagrapi settings не содержат sessionid")
         return cookies
 
-    def settings_from_cookies(self, client, cookies: dict[str, str]) -> dict[str, Any]:
-        self.complete_instagram_cookies(cookies)
+    def settings_from_cookies(self, client, cookies: dict[str, str], allow_network: bool = True) -> dict[str, Any]:
+        self.complete_instagram_cookies(cookies, allow_network=allow_network)
         if not cookies.get("sessionid"):
             raise ProviderError("COOKIES_FORMAT_UNKNOWN", "Cookies-файл должен содержать sessionid")
         settings = client.get_settings()
@@ -158,7 +175,7 @@ class SessionStore:
             cookies.setdefault("ds_user_id", str(user_id))
         return auth
 
-    def cookies_from_secret(self, raw_secret: bytes) -> dict[str, str]:
+    def cookies_from_secret(self, raw_secret: bytes, allow_network: bool = True) -> dict[str, str]:
         text = raw_secret.decode("utf-8", errors="ignore").strip()
         cookies = (
             self.cookies_from_sessionid_label(text)
@@ -171,7 +188,7 @@ class SessionStore:
                 "COOKIES_FORMAT_UNKNOWN",
                 "Cookies/settings должны содержать sessionid.",
             )
-        self.complete_instagram_cookies(cookies)
+        self.complete_instagram_cookies(cookies, allow_network=allow_network)
         cookies.setdefault("csrftoken", "")
         return cookies
 
@@ -252,7 +269,7 @@ class SessionStore:
                 cookies[name] = value
         return cookies or None
 
-    def complete_instagram_cookies(self, cookies: dict[str, str]) -> None:
+    def complete_instagram_cookies(self, cookies: dict[str, str], allow_network: bool = True) -> None:
         sessionid = cookies.get("sessionid")
         if not sessionid:
             return
@@ -263,6 +280,9 @@ class SessionStore:
             cookies.setdefault("ds_user_id", user_id)
 
         if cookies.get("csrftoken") and cookies.get("mid"):
+            return
+
+        if not allow_network:
             return
 
         try:
@@ -337,9 +357,9 @@ class InstagramPreviewProvider(BaseProvider):
             fallback_username,
         )
 
-    async def profile_preview(self, account, username: str, limit: int) -> dict[str, Any]:
+    async def profile_preview(self, account, username: str, limit: int, force_refresh: bool = False) -> dict[str, Any]:
         session_ref = self._account_session_ref(account)
-        return await asyncio.to_thread(self._profile_preview_sync, session_ref, username, limit)
+        return await asyncio.to_thread(self._profile_preview_sync, session_ref, username, limit, force_refresh)
 
     async def post_metadata(self, account, username: str, shortcode: str) -> dict[str, Any]:
         session_ref = self._account_session_ref(account)
@@ -389,7 +409,7 @@ class InstagramPreviewProvider(BaseProvider):
             settings_secret_id=getattr(account, "settings_secret_id", None),
         )
 
-    def _client_from_session_ref(self, session_ref: AccountSessionRef):
+    def _client_from_session_ref(self, session_ref: AccountSessionRef, allow_network: bool = True):
         if session_ref.secret_kind != "cookies":
             raise ProviderError(
                 "UNSUPPORTED_LEGACY_SESSION",
@@ -399,18 +419,34 @@ class InstagramPreviewProvider(BaseProvider):
         if session_ref.settings_secret_id:
             try:
                 raw_settings = load_secret(session_ref.settings_secret_id)
-                return self._client_from_raw_secret("instagrapi_settings", raw_settings, session_ref.username)
+                return self._client_from_raw_secret(
+                    "instagrapi_settings",
+                    raw_settings,
+                    session_ref.username,
+                    allow_network=allow_network,
+                )
             except ProviderError:
                 pass
             except Exception:
                 pass
 
         raw_secret = load_secret(session_ref.secret_id)
-        return self._client_from_raw_secret(session_ref.secret_kind, raw_secret, session_ref.username)
+        return self._client_from_raw_secret(
+            session_ref.secret_kind,
+            raw_secret,
+            session_ref.username,
+            allow_network=allow_network,
+        )
 
-    def _client_from_raw_secret(self, secret_kind: str, raw_secret: bytes, username: str | None = None):
+    def _client_from_raw_secret(
+        self,
+        secret_kind: str,
+        raw_secret: bytes,
+        username: str | None = None,
+        allow_network: bool = True,
+    ):
         client = self._new_client()
-        settings = self._settings_from_raw_secret(client, secret_kind, raw_secret, username)
+        settings = self._settings_from_raw_secret(client, secret_kind, raw_secret, username, allow_network)
         client.set_settings(settings)
         return client
 
@@ -420,8 +456,9 @@ class InstagramPreviewProvider(BaseProvider):
         secret_kind: str,
         raw_secret: bytes,
         username: str | None = None,
+        allow_network: bool = True,
     ) -> dict[str, Any]:
-        settings = self.session_store.settings_from_secret(raw_secret)
+        settings = self.session_store.settings_from_secret(raw_secret, allow_network=allow_network)
         if settings is not None:
             return settings
 
@@ -433,13 +470,17 @@ class InstagramPreviewProvider(BaseProvider):
                 "Этот тип Instagram-сессии больше не поддерживается. Загрузите browser cookies или instagrapi settings.",
             )
 
-        return self.session_store.settings_from_cookies(client, self.session_store.cookies_from_secret(raw_secret))
+        return self.session_store.settings_from_cookies(
+            client,
+            self.session_store.cookies_from_secret(raw_secret, allow_network=allow_network),
+            allow_network=allow_network,
+        )
 
     def _downloader_cookies_sync(self, session_ref: AccountSessionRef) -> dict[str, str]:
         if session_ref.settings_secret_id:
             try:
                 raw_settings = load_secret(session_ref.settings_secret_id)
-                settings = self.session_store.settings_from_secret(raw_settings)
+                settings = self.session_store.settings_from_secret(raw_settings, allow_network=False)
                 if settings is not None:
                     return self.session_store.cookies_from_settings(settings)
             except ProviderError:
@@ -453,10 +494,10 @@ class InstagramPreviewProvider(BaseProvider):
                 "Этот тип Instagram-сессии больше не поддерживается. Загрузите browser cookies или instagrapi settings.",
             )
         raw_secret = load_secret(session_ref.secret_id)
-        settings = self.session_store.settings_from_secret(raw_secret)
+        settings = self.session_store.settings_from_secret(raw_secret, allow_network=False)
         if settings is not None:
             return self.session_store.cookies_from_settings(settings)
-        return self.session_store.cookies_from_secret(raw_secret)
+        return self.session_store.cookies_from_secret(raw_secret, allow_network=False)
 
     def _client_settings_update(self, client) -> SessionSettingsUpdate:
         try:
@@ -512,18 +553,53 @@ class InstagramPreviewProvider(BaseProvider):
                 return False, mapped.reason, None
             return False, "UNKNOWN_ERROR", None
 
-    def _profile_preview_sync(self, session_ref: AccountSessionRef, username: str, limit: int) -> dict[str, Any]:
+    def _profile_preview_sync(
+        self,
+        session_ref: AccountSessionRef,
+        username: str,
+        limit: int,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        started_at = monotonic()
+        timings = {
+            "client_from_session_ms": 0.0,
+            "user_info_ms": 0.0,
+            "user_medias_ms": 0.0,
+            "settings_update_ms": 0.0,
+        }
+        media_count: int | None = None
+        requested_limit = max(0, int(limit or 0))
+        media_limit = 0
         try:
-            client = self._client_from_session_ref(session_ref)
-            profile = client.user_info_by_username(username, use_cache=False)
-            medias = client.user_medias(str(profile.pk), amount=limit)
+            step_started_at = monotonic()
+            try:
+                client = self._client_from_session_ref(session_ref, allow_network=False)
+            finally:
+                timings["client_from_session_ms"] = _duration_ms(step_started_at)
+
+            step_started_at = monotonic()
+            try:
+                profile = client.user_info_by_username(username, use_cache=not force_refresh)
+            finally:
+                timings["user_info_ms"] = _duration_ms(step_started_at)
+
+            media_count = self._optional_int(getattr(profile, "media_count", None)) or 0
+            medias = []
+            if media_count > 0 and requested_limit > 0:
+                media_limit = min(requested_limit, media_count)
+                step_started_at = monotonic()
+                try:
+                    medias = client.user_medias(str(profile.pk), amount=media_limit)
+                finally:
+                    timings["user_medias_ms"] = _duration_ms(step_started_at)
+
             payload = {
                 "username": profile.username,
                 "full_name": profile.full_name or None,
                 "bio": profile.biography or None,
                 "followers_count": self._optional_int(getattr(profile, "follower_count", None)),
                 "following_count": self._optional_int(getattr(profile, "following_count", None)),
-                "posts_count": self._optional_int(getattr(profile, "media_count", None)) or 0,
+                "posts_count": media_count,
                 "is_private": bool(getattr(profile, "is_private", False)),
                 "is_verified": bool(getattr(profile, "is_verified", False)),
                 "profile_pic_url": self._url_value(
@@ -531,18 +607,81 @@ class InstagramPreviewProvider(BaseProvider):
                     or getattr(profile, "profile_pic_url", None)
                 ),
                 "external_url": self._url_value(getattr(profile, "external_url", None)),
-                "posts": [self._media_preview(media) for media in medias[:limit]],
+                "posts": [self._media_preview(media) for media in list(medias)[:media_limit]],
             }
-            payload["_session_update"] = self._client_settings_update(client)
+            self._log_profile_preview_timing(
+                username,
+                timings,
+                started_at,
+                media_count=media_count,
+                requested_limit=requested_limit,
+                media_limit=media_limit,
+                force_refresh=force_refresh,
+            )
             return payload
-        except ProviderError:
+        except ProviderError as exc:
+            self._log_profile_preview_timing(
+                username,
+                timings,
+                started_at,
+                media_count=media_count,
+                requested_limit=requested_limit,
+                media_limit=media_limit,
+                force_refresh=force_refresh,
+                error_code=exc.reason,
+            )
             raise
         except Exception as exc:
-            self._raise_mapped_error(exc)
+            try:
+                self._raise_mapped_error(exc)
+            except ProviderError as mapped:
+                self._log_profile_preview_timing(
+                    username,
+                    timings,
+                    started_at,
+                    media_count=media_count,
+                    requested_limit=requested_limit,
+                    media_limit=media_limit,
+                    force_refresh=force_refresh,
+                    error_code=mapped.reason,
+                )
+                raise
+
+    def _log_profile_preview_timing(
+        self,
+        username: str,
+        timings: dict[str, float],
+        started_at: float,
+        media_count: int | None,
+        requested_limit: int,
+        media_limit: int,
+        force_refresh: bool,
+        error_code: str | None = None,
+    ) -> None:
+        _safe_timing_log(
+            (
+                "profile_preview_provider_timing provider=%s target=%s "
+                "client_from_session_ms=%.2f user_info_ms=%.2f user_medias_ms=%.2f "
+                "settings_update_ms=%.2f total_ms=%.2f media_count=%s requested_limit=%s "
+                "media_limit=%s force_refresh=%s error_code=%s"
+            ),
+            self.provider_name,
+            username,
+            timings["client_from_session_ms"],
+            timings["user_info_ms"],
+            timings["user_medias_ms"],
+            timings["settings_update_ms"],
+            _duration_ms(started_at),
+            media_count,
+            requested_limit,
+            media_limit,
+            bool(force_refresh),
+            error_code,
+        )
 
     def _post_metadata_sync(self, session_ref: AccountSessionRef, username: str, shortcode: str) -> dict[str, Any]:
         try:
-            client = self._client_from_session_ref(session_ref)
+            client = self._client_from_session_ref(session_ref, allow_network=False)
             media = client.media_info(self._media_pk_from_shortcode(client, shortcode))
             payload = self._media_preview(media)
             payload["username"] = username
@@ -560,7 +699,7 @@ class InstagramPreviewProvider(BaseProvider):
         comments_limit: int,
     ) -> list[dict[str, Any]]:
         try:
-            client = self._client_from_session_ref(session_ref)
+            client = self._client_from_session_ref(session_ref, allow_network=False)
             comments = client.media_comments(
                 self._media_pk_from_shortcode(client, shortcode),
                 amount=comments_limit,
