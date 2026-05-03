@@ -49,11 +49,17 @@ from schemas import (
     JobCreateRequest,
     JobItemResponse,
     JobStatusResponse,
+    JobTasks,
     LoginRequest,
+    OverallProgressResponse,
+    ProfileIndexStartRequest,
+    ProfileIndexStartResponse,
+    ProfileIndexStatusResponse,
     ProfilePreviewRequest,
     ProfilePreviewResponse,
     RegisterRequest,
     SettingsUpdateRequest,
+    StageProgressResponse,
     SetupInitializeRequest,
     SetupStatusResponse,
 )
@@ -134,6 +140,39 @@ PROVIDER_ERROR_MESSAGES = {
 PROVIDER_REASON_ALIASES = {
     "LOGIN_FAILED": "BAD_CREDENTIALS",
     "UNKNOWN": "UNKNOWN_ERROR",
+}
+STATUS_PUBLIC_MAP = {
+    "PENDING": "queued",
+    "queued": "queued",
+    "RUNNING": "running",
+    "running": "running",
+    "DONE": "done",
+    "completed": "done",
+    "FAILED": "failed",
+    "failed": "failed",
+    "WAITING": "waiting",
+    "waiting": "waiting",
+    "CANCELLED": "cancelled",
+    "cancelled": "cancelled",
+}
+PROFILE_INDEX_STAGE_LABELS = {
+    "prepare_session": "Готовим Instagram-сессию",
+    "validate_session": "Проверяем Instagram-сессию",
+    "fetch_profile": "Получаем профиль",
+    "fetch_posts": "Получаем индекс публикаций",
+    "save_index": "Сохраняем индекс",
+    "done": "Индекс готов",
+    "failed": "Индексация завершилась ошибкой",
+}
+ENRICHMENT_STAGE_LABELS = {
+    "full_json": "Сохраняем JSON",
+    "images": "Скачиваем изображения",
+    "videos": "Скачиваем видео",
+    "comments": "Скачиваем комментарии",
+    "zip": "Собираем ZIP",
+    "done": "Задача завершена",
+    "failed": "Задача завершилась ошибкой",
+    "waiting": "Пауза rate limit",
 }
 
 
@@ -481,6 +520,58 @@ async def delete_account(account_id: str, user: AdminUser = Depends(current_admi
     return {"ok": True}
 
 
+@app.post("/api/profile/index/start", response_model=ProfileIndexStartResponse)
+async def profile_index_start(
+    payload: ProfileIndexStartRequest,
+    user: AdminUser = Depends(current_admin),
+    db=Depends(get_session),
+):
+    """Создаёт profile_index job и сразу возвращает id для polling."""
+    if await find_active_job(db):
+        raise HTTPException(status_code=409, detail="Допускается только одна активная задача")
+    try:
+        username = instagram_provider.normalize_target(payload.target)
+    except ProviderError as exc:
+        _raise_provider_http(exc)
+    account = await _default_account(db)
+    job = Job(
+        username=username,
+        account_id=account.id,
+        type="profile_index",
+        status="PENDING",
+        stage="prepare_session",
+        mode="profile_index",
+        options={"limit": payload.limit, "force_refresh": payload.force_refresh},
+        shortcodes=[],
+        progress_current=0,
+        progress_total=payload.limit,
+        progress_payload={"stage_label": PROFILE_INDEX_STAGE_LABELS["prepare_session"]},
+        items_total=0,
+    )
+    db.add(job)
+    await db.commit()
+    await db.refresh(job)
+    schedule_job(job.id)
+    return ProfileIndexStartResponse(
+        ok=True,
+        job_id=job.id,
+        status_url=f"/api/profile/index/{job.id}/status",
+    )
+
+
+@app.get("/api/profile/index/{job_id}/status", response_model=ProfileIndexStatusResponse)
+async def profile_index_status(
+    job_id: str,
+    user: AdminUser = Depends(current_admin),
+    db=Depends(get_session),
+):
+    """Возвращает backend-driven progress profile_index job."""
+    job = await db.get(Job, job_id)
+    if job is None or (getattr(job, "type", None) or "enrichment") != "profile_index":
+        raise HTTPException(status_code=404, detail="Profile index job not found")
+    return _profile_index_response(job)
+
+
 @app.post("/api/profile/preview", response_model=ProfilePreviewResponse)
 async def profile_preview(
     payload: ProfilePreviewRequest,
@@ -613,7 +704,7 @@ async def create_job(
     user: AdminUser = Depends(current_admin),
     db=Depends(get_session),
 ):
-    """Создаёт одну архивную job и запускает её в фоне."""
+    """Создаёт enrichment/download job и запускает её в фоне."""
     if await find_active_job(db):
         raise HTTPException(status_code=409, detail="Допускается только одна активная задача")
 
@@ -623,10 +714,14 @@ async def create_job(
         _raise_provider_http(exc)
     settings = await get_settings_map(db)
     account = await _default_account(db)
+    tasks = _tasks_from_job_request(payload)
+    is_task_contract = payload.tasks is not None
+    job_mode = "selected" if is_task_contract else payload.mode
     try:
         shortcodes = list(dict.fromkeys(normalize_instagram_shortcode(shortcode) for shortcode in payload.shortcodes))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Некорректный shortcode Instagram") from exc
+
     cache = await db.get(ProfileCache, username)
     preview_posts_by_shortcode: dict[str, dict] = {}
     if cache is not None:
@@ -637,7 +732,10 @@ async def create_job(
             if post.get("shortcode")
         }
 
-    if payload.mode != "selected":
+    if is_task_contract and not shortcodes:
+        raise HTTPException(status_code=400, detail="Выберите хотя бы одну публикацию")
+
+    if not is_task_contract and payload.mode != "selected":
         limit = payload.limit or int(settings.get("default_preview_posts", DEFAULT_SETTINGS["default_preview_posts"]))
         if cache is None or not _preview_cache_is_usable(cache, limit):
             try:
@@ -684,27 +782,36 @@ async def create_job(
         raise HTTPException(status_code=400, detail="Нет публикаций для архивации")
 
     options = {
-        "media": payload.options.get("media", payload.mode != "meta-only"),
-        "comments": payload.options.get("comments", False),
-        "zip": payload.options.get("zip", True),
+        "tasks": tasks,
+        "media": bool(tasks["images"] or tasks["videos"]),
+        "comments": bool(tasks["comments"]),
+        "zip": bool(tasks["zip"]),
     }
     job = Job(
         username=username,
         account_id=account.id,
+        type="enrichment",
         status="PENDING",
-        mode=payload.mode,
+        stage="queued",
+        mode=job_mode,
         options=options,
         shortcodes=shortcodes,
         items_total=len(shortcodes),
+        progress_payload={"tasks": tasks},
     )
     db.add(job)
     await db.flush()
     for shortcode in shortcodes:
+        media_type = preview_posts_by_shortcode.get(shortcode, {}).get("type") or "unknown"
         db.add(
             JobItem(
                 job_id=job.id,
                 shortcode=shortcode,
-                media_type=preview_posts_by_shortcode.get(shortcode, {}).get("type") or "unknown",
+                media_type=media_type,
+                full_json_status="queued" if tasks["full_json"] else "skipped",
+                image_status="queued" if tasks["images"] and media_type in {"photo", "carousel"} else "skipped",
+                video_status="queued" if tasks["videos"] and media_type in {"video", "reel"} else "skipped",
+                comments_status="queued" if tasks["comments"] else "skipped",
             )
         )
     await db.commit()
@@ -981,19 +1088,93 @@ async def create_admin_session(db, user: AdminUser, response: Response) -> None:
     _set_session_cookie(response, token)
 
 
+def _tasks_from_job_request(payload: JobCreateRequest) -> dict[str, bool]:
+    if payload.tasks is not None:
+        return payload.tasks.model_dump()
+    include_media = bool(payload.options.get("media", payload.mode != "meta-only")) and payload.mode != "meta-only"
+    return {
+        "full_json": True,
+        "images": include_media,
+        "videos": include_media,
+        "comments": bool(payload.options.get("comments", False)),
+        "zip": bool(payload.options.get("zip", True)),
+    }
+
+
+def _public_status(value: str | None) -> str:
+    return STATUS_PUBLIC_MAP.get(value or "", (value or "queued").lower())
+
+
+def _percent(current: int, total: int) -> int:
+    return min(100, max(0, int(round((current / total) * 100)))) if total else 0
+
+
+def _profile_index_response(job: Job) -> ProfileIndexStatusResponse:
+    status = _public_status(job.status)
+    payload = job.progress_payload if isinstance(job.progress_payload, dict) else {}
+    total = int(job.progress_total or 0)
+    current = int(job.progress_current or 0)
+    stage = job.stage or ("done" if status == "done" else "prepare_session")
+    return ProfileIndexStatusResponse(
+        ok=True,
+        job_id=job.id,
+        type="profile_index",
+        target=job.username,
+        status=status,
+        stage=stage,
+        stage_label=payload.get("stage_label") or PROFILE_INDEX_STAGE_LABELS.get(stage, stage),
+        current=current,
+        total=total,
+        percent=100 if status == "done" else _percent(current, total),
+        current_item=job.current_item,
+        error_code=job.error_code,
+        error_message=job.error_message,
+        result=payload.get("result") if status == "done" else None,
+    )
+
+
 async def _job_response(db, job: Job) -> JobStatusResponse:
     archive_path = _safe_job_archive_path(job)
     archive_exists = archive_path.exists() if archive_path else False
-    archive_ready = job.status == "DONE" and archive_exists
+    public_status = _public_status(job.status)
+    job_type = getattr(job, "type", None) or "enrichment"
+    archive_ready = public_status == "done" and archive_exists
     items_done = int(getattr(job, "items_done", 0) or 0)
     completed_items = int(getattr(job, "completed_items", 0) or 0)
+    payload = job.progress_payload if isinstance(job.progress_payload, dict) else {}
+    overall_payload = payload.get("overall") if isinstance(payload.get("overall"), dict) else {}
+    total = int(overall_payload.get("total") or job.progress_total or job.items_total or 0)
+    current = int(overall_payload.get("current") or job.progress_current or items_done or 0)
+    stages_payload = payload.get("stages") if isinstance(payload.get("stages"), dict) else {}
+    stages = {
+        name: StageProgressResponse(
+            enabled=bool(value.get("enabled", False)),
+            current=int(value.get("current") or 0),
+            total=int(value.get("total") or 0),
+            status=_public_status(value.get("status")),
+        )
+        for name, value in stages_payload.items()
+        if isinstance(value, dict)
+    }
+    stage = job.stage
+    stage_label_map = PROFILE_INDEX_STAGE_LABELS if job_type == "profile_index" else ENRICHMENT_STAGE_LABELS
     return JobStatusResponse(
         id=job.id,
         job_id=job.id,
+        type=job_type,
         target=job.username,
         username=job.username,
         mode=job.mode,
-        status=job.status,
+        status=public_status,
+        stage=stage,
+        stage_label=payload.get("stage_label") or stage_label_map.get(stage or "", stage),
+        current_item=job.current_item,
+        overall=OverallProgressResponse(
+            current=current,
+            total=total,
+            percent=int(overall_payload.get("percent") or (100 if public_status == "done" else _percent(current, total))),
+        ),
+        stages=stages,
         items_done=items_done,
         items_total=job.items_total,
         completed_items=completed_items or items_done,
@@ -1037,7 +1218,29 @@ async def _job_item_responses(db, job_id: str) -> list[JobItemResponse]:
             .order_by(JobItem.id.asc())
         )
     ).scalars().all()
-    return [JobItemResponse.model_validate(row, from_attributes=True) for row in rows]
+    return [
+        JobItemResponse(
+            id=row.id,
+            shortcode=row.shortcode,
+            target=row.target,
+            media_type=row.media_type,
+            status=_public_status(row.status),
+            full_json_status=_public_status(row.full_json_status),
+            image_status=_public_status(row.image_status),
+            video_status=_public_status(row.video_status),
+            comments_status=_public_status(row.comments_status),
+            current_stage=row.current_stage,
+            error_code=row.error_code,
+            error_message=row.error_message,
+            result_path=row.result_path,
+            metadata_path=row.metadata_path,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            started_at=row.started_at,
+            finished_at=row.finished_at,
+        )
+        for row in rows
+    ]
 
 
 def _is_allowed_media_proxy_host(host: str) -> bool:

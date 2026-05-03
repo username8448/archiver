@@ -37,7 +37,7 @@ const POST_TYPES = {
   },
 };
 
-const INITIAL_POST_BATCH = 12;
+const INITIAL_POST_BATCH = 24;
 const LOAD_MORE_BATCH = 24;
 const MAX_PREVIEW_POSTS = 200;
 
@@ -49,12 +49,13 @@ const state = {
   previewPostIndex: -1,
   activeTab: 'posts',
   activeFilter: 'all',
-  downloadMode: 'last-n',
+  downloadMode: 'selected',
   postsCount: 30,
   options: {
-    media: true,
+    fullJson: true,
+    images: false,
+    videos: false,
     comments: false,
-    stories: false,
     zip: true,
   },
   isDownloading: false,
@@ -66,9 +67,11 @@ const apiRuntime = {
   setupChecked: false,
   currentJobId: null,
   pollTimer: null,
+  profilePollTimer: null,
   secretFile: null,
   profileRequestSeq: 0,
   postsLoading: false,
+  itemStatuses: new Map(),
 };
 
 function formatNumber(value) {
@@ -110,10 +113,6 @@ function apiDate(isoDate) {
   const date = new Date(isoDate);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function mediaProxyUrl(url) {
-  return url ? `/api/media/proxy?url=${encodeURIComponent(url)}` : '';
 }
 
 function escapeHtml(value) {
@@ -317,40 +316,45 @@ function showLiveLoader(username) {
   const primaryText = document.getElementById('loader-primary-text');
   const secondaryText = document.getElementById('loader-secondary-text');
   const steps = ['ls-1', 'ls-2', 'ls-3'];
-  const stepTexts = [
-    ['Разрешение username', 'Проверяем профиль через backend...'],
-    ['Загрузка метаданных', 'Ждём ответ Instagram...'],
-    ['Превью публикаций', 'Собираем последние публикации...'],
-  ];
   clearTimeout(liveLoaderTimer);
+  clearInterval(apiRuntime.profilePollTimer);
+  apiRuntime.profilePollTimer = null;
   overlay?.classList.add('visible');
   if (primaryText) primaryText.textContent = `Загружаем @${username}...`;
-  if (secondaryText) secondaryText.textContent = 'Подключение к backend API';
+  if (secondaryText) secondaryText.textContent = 'Ожидаем backend progress';
   steps.forEach(id => document.getElementById(id)?.classList.remove('active', 'done'));
-
-  let index = 0;
-  const tick = () => {
-    if (index < steps.length) {
-      if (index > 0) document.getElementById(steps[index - 1])?.classList.replace('active', 'done');
-      document.getElementById(steps[index])?.classList.add('active');
-      if (primaryText) primaryText.textContent = stepTexts[index][0];
-      if (secondaryText) secondaryText.textContent = stepTexts[index][1];
-      index += 1;
-      liveLoaderTimer = setTimeout(tick, 900);
-      return;
-    }
-    document.getElementById(steps[steps.length - 1])?.classList.add('done');
-    if (primaryText) primaryText.textContent = `Ждём Instagram для @${username}`;
-    if (secondaryText) secondaryText.textContent = 'Если Instagram отвечает медленно, результат может занять больше времени.';
-    liveLoaderTimer = setTimeout(tick, 3500);
-  };
-  tick();
+  document.getElementById('ls-1')?.classList.add('active');
 }
 
 function hideLiveLoader() {
   clearTimeout(liveLoaderTimer);
+  clearInterval(apiRuntime.profilePollTimer);
   liveLoaderTimer = null;
+  apiRuntime.profilePollTimer = null;
   document.getElementById('profile-loader')?.classList.remove('visible');
+}
+
+function updateProfileIndexLoader(job) {
+  const primaryText = document.getElementById('loader-primary-text');
+  const secondaryText = document.getElementById('loader-secondary-text');
+  const stage = job.stage || 'prepare_session';
+  const stageOrder = ['prepare_session', 'validate_session', 'fetch_profile', 'fetch_posts', 'save_index', 'done'];
+  const activeIndex = Math.max(0, stageOrder.indexOf(stage));
+  const stepForStage = stage === 'prepare_session' || stage === 'validate_session'
+    ? 0
+    : (stage === 'fetch_profile' ? 1 : 2);
+  ['ls-1', 'ls-2', 'ls-3'].forEach((id, index) => {
+    const element = document.getElementById(id);
+    element?.classList.toggle('done', index < stepForStage || job.status === 'done');
+    element?.classList.toggle('active', index === stepForStage && !['done', 'failed', 'cancelled'].includes(job.status));
+  });
+  const pct = Number(job.percent || 0);
+  const countText = Number(job.total || 0) > 0 ? ` · ${job.current || 0}/${job.total}` : '';
+  if (primaryText) primaryText.textContent = job.stage_label || stage;
+  if (secondaryText) secondaryText.textContent = `${pct}%${countText}${job.current_item ? ' · ' + job.current_item : ''}`;
+  if (activeIndex >= 0 && job.status === 'failed' && secondaryText) {
+    secondaryText.textContent = `${job.error_code || 'ERROR'} · ${job.error_message || 'Ошибка индексации'}`;
+  }
 }
 
 function setSearchBusy(busy) {
@@ -373,50 +377,87 @@ async function loadProfile(rawInput, options = {}) {
   try {
     setSearchBusy(true);
     showLiveLoader(username);
-    const payload = await apiRequest('/api/profile/preview', {
+    const started = await apiRequest('/api/profile/index/start', {
       method: 'POST',
       body: {
         target: username,
-        limit: 0,
+        limit: options.limit || INITIAL_POST_BATCH,
         force_refresh: Boolean(options.forceRefresh),
       },
     });
-    if (payload?.ok === false) {
-      const error = new Error(payload.message || payload.error_code || 'Ошибка Instagram preview');
-      error.status = 502;
-      error.errorCode = payload.error_code || null;
-      error.retryAfter = payload.retry_after || null;
-      throw error;
-    }
-
-    const profileData = mapApiProfile(payload);
+    const status = await pollProfileIndex(started.job_id, requestSeq);
+    if (requestSeq !== apiRuntime.profileRequestSeq) return;
+    const result = status.result || {};
+    const profilePayload = {
+      ok: true,
+      source: 'fresh',
+      profile: {
+        ...(result.profile || {}),
+        posts: result.posts || [],
+      },
+    };
+    const profileData = mapApiProfile(profilePayload);
     state.currentProfile = profileData;
-    state.posts = mapApiPosts(payload.profile?.posts);
+    state.posts = mapApiPosts(result.posts);
     state.selectedPosts.clear();
+    apiRuntime.itemStatuses = new Map();
     state.activeTab = 'posts';
     state.activeFilter = 'all';
-    apiRuntime.lastPreview = payload;
-    apiRuntime.postsLoading = !profileData.isPrivate && safeNumber(profileData.postsCount, 0) > state.posts.length;
+    apiRuntime.lastPreview = profilePayload;
+    apiRuntime.postsLoading = false;
     addToHistory(profileData.username);
     renderProfile(profileData);
     showPage('profile');
     const freshness = document.querySelector('.freshness-text');
-    if (freshness) freshness.textContent = (payload.source === 'cache' || payload.from_cache) ? 'Загружено из кэша' : 'Загружено только что';
-    showToast(`Профиль @${profileData.username} успешно загружен`, 'ok');
-    if (apiRuntime.postsLoading) {
-      loadPreviewPosts(profileData.username, INITIAL_POST_BATCH, {
-        requestSeq,
-        forceRefresh: Boolean(options.forceRefresh),
-        initial: true,
-      });
-    }
+    if (freshness) freshness.textContent = 'Индекс загружен backend job';
+    showToast(`Индекс @${profileData.username} готов`, 'ok');
   } catch (error) {
-    showToast(normalizeApiError(error), 'err');
+    if (requestSeq === apiRuntime.profileRequestSeq) showToast(normalizeApiError(error), 'err');
     apiRuntime.postsLoading = false;
   } finally {
-    hideLiveLoader();
-    setSearchBusy(false);
+    if (requestSeq === apiRuntime.profileRequestSeq) {
+      hideLiveLoader();
+      setSearchBusy(false);
+    }
   }
+}
+
+async function pollProfileIndex(jobId, requestSeq) {
+  if (!jobId) throw new Error('Backend не вернул job_id');
+  clearInterval(apiRuntime.profilePollTimer);
+  return new Promise((resolve, reject) => {
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      clearInterval(apiRuntime.profilePollTimer);
+      apiRuntime.profilePollTimer = null;
+    };
+    const tick = async () => {
+      try {
+        if (requestSeq !== apiRuntime.profileRequestSeq) {
+          stop();
+          reject(new Error('Запрос профиля был заменён новым'));
+          return;
+        }
+        const job = await apiRequest(`/api/profile/index/${jobId}/status`);
+        updateProfileIndexLoader(job);
+        if (job.status === 'done') {
+          stop();
+          resolve(job);
+        } else if (['failed', 'cancelled'].includes(job.status)) {
+          const error = new Error(job.error_message || job.error_code || 'Ошибка индексации профиля');
+          error.errorCode = job.error_code || null;
+          stop();
+          reject(error);
+        }
+      } catch (error) {
+        stop();
+        reject(error);
+      }
+    };
+    tick();
+    if (!stopped) apiRuntime.profilePollTimer = setInterval(tick, 1500);
+  });
 }
 
 function setText(id, value) {
@@ -439,17 +480,6 @@ function renderAvatar(profile) {
   }
   image.removeAttribute('src');
   image.style.display = 'none';
-  if (!profile.avatarUrl) return;
-  image.onload = () => {
-    image.style.display = 'block';
-    avatar.classList.add('profile-avatar-has-image');
-  };
-  image.onerror = () => {
-    image.removeAttribute('src');
-    image.style.display = 'none';
-    avatar.classList.remove('profile-avatar-has-image');
-  };
-  image.src = mediaProxyUrl(profile.avatarUrl);
 }
 
 function syncToolbarState() {
@@ -574,17 +604,30 @@ function createPostCard(post, index) {
   const card = document.createElement('div');
   const selected = state.selectedPosts.has(post.shortcode);
   const typeInfo = POST_TYPES[post.type] || POST_TYPES.unknown;
+  const itemStatus = apiRuntime.itemStatuses.get(post.shortcode) || {};
+  const statusChips = ['full_json_status', 'image_status', 'video_status', 'comments_status']
+    .map(key => {
+      const value = itemStatus[key];
+      if (!value || value === 'skipped') return '';
+      const label = {
+        full_json_status: 'JSON',
+        image_status: 'IMG',
+        video_status: 'VID',
+        comments_status: 'COM',
+      }[key];
+      return `<span class="post-stage-chip post-stage-${escapeHtml(value)}">${label}:${escapeHtml(value)}</span>`;
+    })
+    .join('');
   card.className = `post-card${selected ? ' selected' : ''}`;
   card.dataset.postId = post.shortcode;
   card.dataset.postIndex = String(index);
-  const imageHtml = post.previewUrl
-    ? `<img class="post-image" src="${mediaProxyUrl(post.previewUrl)}" alt="Preview ${escapeHtml(post.shortcode)}" loading="lazy" referrerpolicy="no-referrer" />`
-    : '';
   card.innerHTML = `
     <div class="post-media-shell">
-      ${imageHtml}
-      <div class="post-image-fallback${post.previewUrl ? ' is-hidden' : ''}">
-        <span>Preview недоступно</span>
+      <div class="post-image-fallback metadata-card">
+        <strong>${escapeHtml(post.shortcode)}</strong>
+        <span>${escapeHtml(post.date || '—')}</span>
+        <p>${escapeHtml((post.caption || 'Caption недоступен').slice(0, 92))}</p>
+        ${statusChips ? `<div class="post-stage-chips">${statusChips}</div>` : ''}
       </div>
     </div>
     <div class="post-type-icon" title="${escapeHtml(typeInfo.label)}">${typeInfo.icon}</div>
@@ -604,12 +647,6 @@ function createPostCard(post, index) {
       </div>
     </div>
   `;
-  const image = card.querySelector('.post-image');
-  const fallback = card.querySelector('.post-image-fallback');
-  image?.addEventListener('error', () => {
-    image.style.display = 'none';
-    fallback?.classList.remove('is-hidden');
-  });
   card.addEventListener('click', event => {
     if (event.target.classList.contains('post-checkbox')) return;
     openPostPreview(index);
@@ -682,15 +719,13 @@ function openPostPreview(index) {
   }
   const content = document.getElementById('preview-media-content');
   if (content) {
-    content.innerHTML = post.previewUrl
-      ? `<img class="preview-real-image" src="${mediaProxyUrl(post.previewUrl)}" alt="Preview ${escapeHtml(post.shortcode)}" referrerpolicy="no-referrer" /><div class="preview-fallback is-hidden">Preview недоступно</div>`
-      : '<div class="preview-fallback">Preview недоступно</div>';
-    const image = content.querySelector('.preview-real-image');
-    const fallback = content.querySelector('.preview-fallback');
-    image?.addEventListener('error', () => {
-      image.style.display = 'none';
-      fallback?.classList.remove('is-hidden');
-    });
+    content.innerHTML = `
+      <div class="preview-fallback metadata-preview">
+        <strong>${escapeHtml(post.shortcode)}</strong>
+        <span>${escapeHtml(typeInfo.label)} · ${escapeHtml(post.date || '—')}</span>
+        <p>${escapeHtml(post.caption || 'Caption недоступен.')}</p>
+      </div>
+    `;
   }
 
   const captionEl = document.getElementById('preview-caption');
@@ -771,20 +806,15 @@ function setDownloadMode(mode) {
 }
 
 function updateEstimate() {
-  let count = 0;
-  if (state.downloadMode === 'last-n') {
-    count = state.postsCount;
-  } else if (state.downloadMode === 'selected') {
-    count = state.selectedPosts.size;
-  } else if (state.downloadMode === 'all-media') {
-    count = state.currentProfile?.postsCount || state.posts.length || 0;
-  }
-  const mediaEnabled = state.downloadMode !== 'meta-only' && state.options.media;
-  const totalFiles = mediaEnabled ? count * 2 : 0;
-  const totalMb = mediaEnabled ? (count * 6.5).toFixed(0) : '< 1';
+  const count = state.selectedPosts.size;
+  const selectedPosts = state.posts.filter(post => state.selectedPosts.has(post.shortcode));
+  const imageCount = state.options.images ? selectedPosts.filter(post => ['photo', 'carousel'].includes(post.type)).length : 0;
+  const videoCount = state.options.videos ? selectedPosts.filter(post => ['video', 'reel'].includes(post.type)).length : 0;
+  const totalFiles = imageCount + videoCount + (state.options.fullJson ? count : 0) + (state.options.comments ? count : 0);
+  const totalMb = imageCount * 4 + videoCount * 18;
   setText('est-posts', count > 0 ? count.toLocaleString('ru-RU') : '—');
   setText('est-files', totalFiles > 0 ? `~${totalFiles}` : '—');
-  setText('est-size', mediaEnabled ? `~${totalMb} MB` : '< 1 MB');
+  setText('est-size', totalMb > 0 ? `~${totalMb} MB` : '< 1 MB');
 }
 
 async function startDownload() {
@@ -793,8 +823,12 @@ async function startDownload() {
     showToast('Сначала загрузите профиль', 'warn');
     return;
   }
-  if (state.downloadMode === 'selected' && state.selectedPosts.size === 0) {
+  if (state.selectedPosts.size === 0) {
     showToast('Выберите хотя бы один пост для скачивания', 'warn');
+    return;
+  }
+  if (!state.options.fullJson && !state.options.images && !state.options.videos && !state.options.comments && !state.options.zip) {
+    showToast('Включите хотя бы одну задачу', 'warn');
     return;
   }
   const progressBlock = document.getElementById('progress-block');
@@ -819,13 +853,12 @@ async function startDownload() {
       method: 'POST',
       body: {
         target: state.currentProfile.username,
-        mode: state.downloadMode,
-        shortcodes: state.downloadMode === 'selected' ? Array.from(state.selectedPosts) : [],
-        limit: state.postsCount,
-        options: {
-          media: state.downloadMode === 'meta-only' ? false : state.options.media,
+        shortcodes: Array.from(state.selectedPosts),
+        tasks: {
+          full_json: state.options.fullJson,
+          images: state.options.images,
+          videos: state.options.videos,
           comments: state.options.comments,
-          stories: state.options.stories,
           zip: state.options.zip,
         },
       },
@@ -850,7 +883,7 @@ async function pollJob(jobId) {
       const job = await apiRequest(`/api/jobs/${jobId}/status`);
       updateJobProgress(job);
       await refreshJobsHistory();
-      if (['DONE', 'FAILED', 'CANCELLED'].includes(job.status)) {
+      if (['done', 'failed', 'cancelled'].includes(job.status)) {
         stopped = true;
         clearInterval(apiRuntime.pollTimer);
         apiRuntime.pollTimer = null;
@@ -867,27 +900,23 @@ async function pollJob(jobId) {
 }
 
 function updateJobProgress(job) {
-  const total = Math.max(Number(job.items_total || 0), 1);
-  const done = Number(job.items_done || job.completed_items || 0);
-  const pct = Math.min(100, Math.round((done / total) * 100));
+  const overall = job.overall || {};
+  const total = Number(overall.total || job.items_total || 0);
+  const done = Number(overall.current || job.items_done || job.completed_items || 0);
+  const pct = Number.isFinite(Number(overall.percent)) ? Number(overall.percent) : (total ? Math.min(100, Math.round((done / total) * 100)) : 0);
   state.downloadProgress = pct;
   setText('progress-pct', `${pct}%`);
   setText('progress-current', done);
-  setText('progress-total', job.items_total || 0);
+  setText('progress-total', total || 0);
   const progressBar = document.getElementById('progress-bar');
   if (progressBar) progressBar.style.width = `${pct}%`;
-  const labelMap = {
-    PENDING: 'Ожидает запуска...',
-    RUNNING: 'Архивирование публикаций...',
-    WAITING: 'Пауза rate limit — прогресс сохранён',
-    DONE: 'Архивирование завершено!',
-    FAILED: 'Задача завершилась ошибкой',
-    CANCELLED: 'Задача отменена',
-  };
-  setText('progress-label', labelMap[job.status] || job.status);
+  setText('progress-label', job.stage_label || job.status);
+  setText('progress-current-item', job.current_item || '—');
+  renderStageProgress(job.stages || {});
+  renderJobItemStatuses(job.items || []);
   const rateLimit = document.getElementById('rate-limit-warn');
-  if (rateLimit) rateLimit.style.display = job.status === 'WAITING' ? 'flex' : 'none';
-  if (job.status === 'DONE') {
+  if (rateLimit) rateLimit.style.display = job.status === 'waiting' ? 'flex' : 'none';
+  if (job.status === 'done') {
     state.isDownloading = false;
     if (progressBar) progressBar.style.background = 'var(--green)';
     const downloadZipBtn = document.getElementById('btn-download-zip');
@@ -896,20 +925,61 @@ function updateJobProgress(job) {
     if (zipSize) zipSize.textContent = formatBytes(job.archive_size_bytes);
     restoreStartButton();
     showToast('Архивирование завершено успешно!', 'ok');
-  } else if (job.status === 'FAILED' || job.status === 'CANCELLED') {
+  } else if (job.status === 'failed' || job.status === 'cancelled') {
     state.isDownloading = false;
     restoreStartButton();
     showToast(job.error_message || job.failure_reason || 'Ошибка архивации', 'err');
-  } else if (job.status === 'WAITING') {
+  } else if (job.status === 'waiting') {
     state.isDownloading = false;
     restoreStartButton();
   }
 }
 
+function renderStageProgress(stages) {
+  const container = document.getElementById('stage-progress-list');
+  if (!container) return;
+  const labels = {
+    full_json: 'JSON',
+    images: 'Изображения',
+    videos: 'Видео',
+    comments: 'Комментарии',
+    zip: 'ZIP',
+  };
+  container.innerHTML = Object.entries(stages)
+    .filter(([, stage]) => stage.enabled)
+    .map(([name, stage]) => {
+      const total = Number(stage.total || 0);
+      const current = Number(stage.current || 0);
+      const pct = total ? Math.round((current / total) * 100) : (stage.status === 'done' ? 100 : 0);
+      return `
+        <div class="stage-progress-row">
+          <span>${escapeHtml(labels[name] || name)}</span>
+          <div class="stage-progress-bar"><i style="width:${pct}%"></i></div>
+          <b>${escapeHtml(stage.status || 'queued')} · ${current}/${total}</b>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderJobItemStatuses(items) {
+  apiRuntime.itemStatuses = new Map((items || []).map(item => [item.shortcode, item]));
+  renderPostsGrid();
+  const errorList = document.getElementById('item-error-list');
+  if (!errorList) return;
+  const failed = (items || []).filter(item => item.error_code || item.error_message);
+  errorList.innerHTML = failed.slice(0, 5).map(item => `
+    <div class="item-error-row">
+      <span>${escapeHtml(item.shortcode)}</span>
+      <b>${escapeHtml(item.error_code || 'ERROR')}</b>
+    </div>
+  `).join('');
+}
+
 function restoreStartButton() {
   const startBtn = document.getElementById('btn-start-download');
   if (!startBtn) return;
-  startBtn.textContent = 'Начать архивирование';
+  startBtn.textContent = 'Начать догрузку';
   startBtn.style.opacity = '1';
   startBtn.style.pointerEvents = 'auto';
 }
@@ -1303,7 +1373,8 @@ async function refreshJobsHistory() {
     const list = document.querySelector('#jobs-history .jobs-list');
     if (!list) return;
     list.innerHTML = '';
-    if (!jobs.length) {
+    const visibleJobs = (jobs || []).filter(job => job.type !== 'profile_index').slice(0, 4);
+    if (!visibleJobs.length) {
       list.innerHTML = `
         <div class="job-item">
           <div class="job-status-dot job-paused-dot"></div>
@@ -1316,9 +1387,9 @@ async function refreshJobsHistory() {
       `;
       return;
     }
-    jobs.slice(0, 4).forEach(job => {
+    visibleJobs.forEach(job => {
       const item = document.createElement('div');
-      const dotClass = job.status === 'DONE' ? 'job-done-dot' : (job.status === 'FAILED' ? 'job-error-dot' : 'job-paused-dot');
+      const dotClass = job.status === 'done' ? 'job-done-dot' : (job.status === 'failed' ? 'job-error-dot' : 'job-paused-dot');
       const archiveSize = job.archive_size_bytes ? formatBytes(job.archive_size_bytes) : `${job.items_done} / ${job.items_total}`;
       const actions = [];
       if (job.can_resume) actions.push('<button class="job-action-btn job-action-btn-primary" data-action="resume">Возобновить</button>');
@@ -1373,24 +1444,28 @@ async function loadPreviewPosts(username, limit, options = {}) {
     apiRuntime.postsLoading = true;
     if (loader) loader.style.display = 'flex';
     if (endEl) endEl.style.display = 'none';
-    const payload = await apiRequest('/api/profile/preview', {
+    const started = await apiRequest('/api/profile/index/start', {
       method: 'POST',
       body: { target: username, limit, force_refresh: Boolean(options.forceRefresh) },
     });
+    const status = await pollProfileIndex(started.job_id, requestSeq);
     if (requestSeq !== apiRuntime.profileRequestSeq || state.currentProfile?.username !== username) return null;
-    if (payload?.ok === false) {
-      const error = new Error(payload.message || payload.error_code || 'Ошибка Instagram preview');
-      error.status = 502;
-      error.errorCode = payload.error_code || null;
-      throw error;
-    }
+    const result = status.result || {};
+    const payload = {
+      ok: true,
+      source: 'fresh',
+      profile: {
+        ...(result.profile || {}),
+        posts: result.posts || [],
+      },
+    };
     apiRuntime.postsLoading = false;
     state.currentProfile = mapApiProfile(payload);
-    state.posts = mapApiPosts(payload.profile?.posts);
+    state.posts = mapApiPosts(result.posts);
     syncSelectionWithPosts();
     renderProfile(state.currentProfile);
     const freshness = document.querySelector('.freshness-text');
-    if (freshness) freshness.textContent = (payload.source === 'cache' || payload.from_cache) ? 'Публикации из кэша' : 'Публикации загружены';
+    if (freshness) freshness.textContent = 'Индекс публикаций обновлён';
     if (!options.initial) showToast(`Загружено ${state.posts.length} публикаций`, 'ok');
     return payload;
   } catch (error) {
@@ -1470,9 +1545,10 @@ function bindApiEventListeners() {
     toggleSwitch.addEventListener('click', () => {
       const isOn = toggleSwitch.dataset.state === 'on';
       toggleSwitch.dataset.state = isOn ? 'off' : 'on';
-      if (toggleSwitch.id === 'toggle-media') state.options.media = !isOn;
+      if (toggleSwitch.id === 'toggle-full-json') state.options.fullJson = !isOn;
+      if (toggleSwitch.id === 'toggle-images') state.options.images = !isOn;
+      if (toggleSwitch.id === 'toggle-videos') state.options.videos = !isOn;
       if (toggleSwitch.id === 'toggle-comments') state.options.comments = !isOn;
-      if (toggleSwitch.id === 'toggle-stories') state.options.stories = !isOn;
       if (toggleSwitch.id === 'toggle-zip') state.options.zip = !isOn;
       updateEstimate();
     });
@@ -1541,15 +1617,31 @@ function bindApiEventListeners() {
     const post = getFilteredPosts()[state.previewPostIndex];
     if (!post) return;
     setDownloadMode('selected');
+    if (['photo', 'carousel'].includes(post.type)) {
+      state.options.images = true;
+      const imagesToggle = document.getElementById('toggle-images');
+      if (imagesToggle) imagesToggle.dataset.state = 'on';
+    }
+    if (['video', 'reel'].includes(post.type)) {
+      state.options.videos = true;
+      const videosToggle = document.getElementById('toggle-videos');
+      if (videosToggle) videosToggle.dataset.state = 'on';
+    }
     addPostToSelection(post, `Пост ${post.shortcode} добавлен в выборку`);
   });
   document.getElementById('btn-preview-meta')?.addEventListener('click', () => {
     const post = getFilteredPosts()[state.previewPostIndex];
     if (!post) return;
     setDownloadMode('selected');
-    state.options.media = false;
-    const mediaToggle = document.getElementById('toggle-media');
-    if (mediaToggle) mediaToggle.dataset.state = 'off';
+    state.options.fullJson = true;
+    state.options.images = false;
+    state.options.videos = false;
+    const jsonToggle = document.getElementById('toggle-full-json');
+    const imagesToggle = document.getElementById('toggle-images');
+    const videosToggle = document.getElementById('toggle-videos');
+    if (jsonToggle) jsonToggle.dataset.state = 'on';
+    if (imagesToggle) imagesToggle.dataset.state = 'off';
+    if (videosToggle) videosToggle.dataset.state = 'off';
     addPostToSelection(post, `Пост ${post.shortcode} добавлен в выборку для JSON`);
   });
   document.getElementById('drawer-close')?.addEventListener('click', closeAccountsDrawer);

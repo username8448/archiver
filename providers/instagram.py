@@ -361,6 +361,14 @@ class InstagramPreviewProvider(BaseProvider):
         session_ref = self._account_session_ref(account)
         return await asyncio.to_thread(self._profile_preview_sync, session_ref, username, limit, force_refresh)
 
+    async def profile_info(self, account, username: str, force_refresh: bool = False) -> dict[str, Any]:
+        session_ref = self._account_session_ref(account)
+        return await asyncio.to_thread(self._profile_info_sync, session_ref, username, force_refresh)
+
+    async def profile_medias_index(self, account, profile_pk: str, limit: int) -> list[dict[str, Any]]:
+        session_ref = self._account_session_ref(account)
+        return await asyncio.to_thread(self._profile_medias_index_sync, session_ref, profile_pk, limit)
+
     async def post_metadata(self, account, username: str, shortcode: str) -> dict[str, Any]:
         session_ref = self._account_session_ref(account)
         return await asyncio.to_thread(self._post_metadata_sync, session_ref, username, shortcode)
@@ -646,6 +654,58 @@ class InstagramPreviewProvider(BaseProvider):
                     error_code=mapped.reason,
                 )
                 raise
+
+    def _profile_info_sync(
+        self,
+        session_ref: AccountSessionRef,
+        username: str,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            client = self._client_from_session_ref(session_ref, allow_network=False)
+            profile = client.user_info_by_username(username, use_cache=not force_refresh)
+            media_count = self._optional_int(getattr(profile, "media_count", None)) or 0
+            profile_pk = getattr(profile, "pk", None)
+            if profile_pk is None:
+                raise ProviderError("PROVIDER_ERROR", "Instagram provider не вернул id профиля")
+            return {
+                "_pk": str(profile_pk),
+                "username": profile.username,
+                "full_name": profile.full_name or None,
+                "bio": profile.biography or None,
+                "followers_count": self._optional_int(getattr(profile, "follower_count", None)),
+                "following_count": self._optional_int(getattr(profile, "following_count", None)),
+                "posts_count": media_count,
+                "is_private": bool(getattr(profile, "is_private", False)),
+                "is_verified": bool(getattr(profile, "is_verified", False)),
+                "profile_pic_url": self._url_value(
+                    getattr(profile, "profile_pic_url_hd", None)
+                    or getattr(profile, "profile_pic_url", None)
+                ),
+                "external_url": self._url_value(getattr(profile, "external_url", None)),
+            }
+        except ProviderError:
+            raise
+        except Exception as exc:
+            self._raise_mapped_error(exc)
+
+    def _profile_medias_index_sync(
+        self,
+        session_ref: AccountSessionRef,
+        profile_pk: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        try:
+            amount = max(0, int(limit or 0))
+            if amount <= 0:
+                return []
+            client = self._client_from_session_ref(session_ref, allow_network=False)
+            medias = client.user_medias(str(profile_pk), amount=amount)
+            return [self._media_preview(media) for media in list(medias)[:amount]]
+        except ProviderError:
+            raise
+        except Exception as exc:
+            self._raise_mapped_error(exc)
 
     def _log_profile_preview_timing(
         self,

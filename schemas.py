@@ -78,17 +78,68 @@ class ProfilePreviewResponse(BaseModel):
     profile: dict[str, Any]
 
 
+class ProfileIndexStartRequest(BaseModel):
+    target: str
+    limit: int = Field(default=24, ge=0, le=200)
+    force_refresh: bool = False
+
+
+class ProfileIndexStartResponse(BaseModel):
+    ok: bool = True
+    job_id: str
+    status_url: str
+
+
+class ProfileIndexStatusResponse(BaseModel):
+    ok: bool = True
+    job_id: str
+    type: str = "profile_index"
+    target: str
+    status: str
+    stage: str | None = None
+    stage_label: str | None = None
+    current: int = 0
+    total: int = 0
+    percent: int = 0
+    current_item: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    result: dict[str, Any] | None = None
+
+
+class JobTasks(BaseModel):
+    full_json: bool = True
+    images: bool = False
+    videos: bool = False
+    comments: bool = False
+    zip: bool = True
+
+
 class JobCreateRequest(BaseModel):
     target: str
     mode: Literal["meta-only", "last-n", "selected", "all-media"] = "last-n"
     shortcodes: list[str] = Field(default_factory=list)
     limit: int | None = Field(default=None, ge=1, le=500)
     options: dict[str, Any] = Field(default_factory=dict)
+    tasks: JobTasks | None = None
 
     @field_validator("shortcodes")
     @classmethod
     def validate_shortcodes(cls, value: list[str]) -> list[str]:
         return [normalize_instagram_shortcode(shortcode) for shortcode in value]
+
+
+class StageProgressResponse(BaseModel):
+    enabled: bool = False
+    current: int = 0
+    total: int = 0
+    status: str = "skipped"
+
+
+class OverallProgressResponse(BaseModel):
+    current: int = 0
+    total: int = 0
+    percent: int = 0
 
 
 class JobItemResponse(BaseModel):
@@ -97,6 +148,11 @@ class JobItemResponse(BaseModel):
     target: str | None = None
     media_type: str | None = None
     status: str
+    full_json_status: str = "skipped"
+    image_status: str = "skipped"
+    video_status: str = "skipped"
+    comments_status: str = "skipped"
+    current_stage: str | None = None
     error_code: str | None = None
     error_message: str | None = None
     result_path: str | None = None
@@ -111,10 +167,16 @@ class JobStatusResponse(BaseModel):
     ok: bool = True
     id: str
     job_id: str
+    type: str = "enrichment"
     target: str
     username: str
     mode: str
     status: str
+    stage: str | None = None
+    stage_label: str | None = None
+    current_item: str | None = None
+    overall: OverallProgressResponse = Field(default_factory=OverallProgressResponse)
+    stages: dict[str, StageProgressResponse] = Field(default_factory=dict)
     items_done: int
     items_total: int
     completed_items: int

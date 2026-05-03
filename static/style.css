@@ -1181,6 +1181,41 @@ input {
   color: var(--gray-500);
 }
 
+.stage-progress-list,
+.item-error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stage-progress-row,
+.item-error-row {
+  display: grid;
+  grid-template-columns: 70px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--gray-400);
+}
+
+.stage-progress-bar {
+  height: 4px;
+  background: var(--gray-800);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.stage-progress-bar i {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+}
+
+.item-error-row {
+  grid-template-columns: 1fr auto;
+  color: var(--red);
+}
+
 .progress-controls {
   display: flex;
   gap: 6px;
@@ -1574,6 +1609,56 @@ input {
 
 .post-image-fallback.is-hidden {
   display: none;
+}
+
+.metadata-card {
+  align-items: flex-start;
+  justify-content: flex-start;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.metadata-card strong,
+.metadata-preview strong {
+  color: var(--gray-100);
+  font-size: 13px;
+}
+
+.metadata-card p,
+.metadata-preview p {
+  margin: 0;
+  color: var(--gray-400);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.post-stage-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: auto;
+}
+
+.post-stage-chip {
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--gray-800);
+  color: var(--gray-300);
+  font-size: 9px;
+}
+
+.post-stage-done { color: var(--green); }
+.post-stage-running { color: var(--orange); }
+.post-stage-failed { color: var(--red); }
+
+.metadata-preview {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 8px;
+  padding: 20px;
 }
 
 .posts-empty-state {
