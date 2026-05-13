@@ -1,4 +1,4 @@
-# Instagram Archiver v4
+# Instagram Archiver (заброшен. долгие запросы api)
 
 Локальный FastAPI-сервис для архивирования Instagram-профилей.
 
